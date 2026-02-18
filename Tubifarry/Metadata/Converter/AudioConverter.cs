@@ -46,19 +46,19 @@ namespace Tubifarry.Metadata.Converter
 
             int? currentBitrate = await GetTrackBitrateAsync(trackFile.Path);
 
-            (AudioFormat targetFormat, int? targetBitrate) = GetTargetConversionForTrack(trackFormat, currentBitrate, trackFile);
-            if (targetFormat == AudioFormat.Unknown)
+            ConversionResult result = await GetTargetConversionForTrack(trackFormat, currentBitrate, trackFile);
+            if (result.IsBlocked)
                 return;
 
-            LogConversionPlan(trackFormat, currentBitrate, targetFormat, targetBitrate, trackFile.Path);
+            LogConversionPlan(trackFormat, currentBitrate, result.TargetFormat, result.TargetBitrate, trackFile.Path);
 
-            await PerformConversion(trackFile, targetFormat, targetBitrate);
+            await PerformConversion(trackFile, result);
         }
 
-        private async Task PerformConversion(TrackFile trackFile, AudioFormat targetFormat, int? targetBitrate)
+        private async Task PerformConversion(TrackFile trackFile, ConversionResult result)
         {
             AudioMetadataHandler audioHandler = new(trackFile.Path);
-            bool success = await audioHandler.TryConvertToFormatAsync(targetFormat, targetBitrate);
+            bool success = await audioHandler.TryConvertToFormatAsync(result.TargetFormat, result.TargetBitrate, result.TargetBitDepth, result.UseCBR);
             trackFile.Path = audioHandler.TrackPath;
 
             if (success)
@@ -86,25 +86,110 @@ namespace Tubifarry.Metadata.Converter
             }
         }
 
-        private (AudioFormat TargetFormat, int? TargetBitrate) GetTargetConversionForTrack(AudioFormat trackFormat, int? currentBitrate, TrackFile trackFile)
+        private async Task<int?> GetTrackBitDepthAsync(string filePath)
         {
+            try
+            {
+                string probeArgs = $"-v error -select_streams a:0 -show_entries stream=bits_per_raw_sample,sample_fmt -of default=noprint_wrappers=1 \"{filePath}\"";
+                string probeOutput = await Probe.New().Start(probeArgs);
+
+                if (string.IsNullOrWhiteSpace(probeOutput))
+                    return null;
+
+                foreach (string line in probeOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (line.StartsWith("bits_per_raw_sample=") && int.TryParse(line.AsSpan(20), out int bitsPerRaw) && bitsPerRaw > 0)
+                        return bitsPerRaw;
+                }
+
+                foreach (string line in probeOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (line.StartsWith("sample_fmt="))
+                    {
+                        string sampleFmt = line[11..].Trim().ToLower();
+                        return sampleFmt switch
+                        {
+                            "s16" or "s16le" or "s16be" or "s16p" => 16,
+                            "s24" or "s24le" or "s24be" or "s24p" => 24,
+                            "s32" or "s32le" or "s32be" or "s32p" => 32,
+                            _ => null
+                        };
+                    }
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to get bit depth: {0}", filePath);
+                return null;
+            }
+        }
+
+
+        private ConversionResult ShouldBlockConversion(ConversionRule rule, AudioFormat trackFormat, int? currentBitrate, int? currentBitDepth)
+        {
+            if (rule.TargetFormat == AudioFormat.Unknown)
+                return ConversionResult.Blocked();
+
+            // Block lossy to lossless conversion
+            if (AudioFormatHelper.IsLossyFormat(trackFormat) && !AudioFormatHelper.IsLossyFormat(rule.TargetFormat))
+            {
+                _logger.Warn($"Blocked lossy to lossless conversion from {trackFormat} to {rule.TargetFormat}");
+                return ConversionResult.Blocked();
+            }
+
+            // Block bitrate upsampling for lossy formats
+            if (AudioFormatHelper.IsLossyFormat(trackFormat) &&
+                AudioFormatHelper.IsLossyFormat(rule.TargetFormat) &&
+                currentBitrate.HasValue &&
+                rule.TargetBitrate.HasValue &&
+                rule.TargetBitrate.Value > currentBitrate.Value)
+            {
+                _logger.Warn($"Blocked bitrate upsampling from {currentBitrate}kbps to {rule.TargetBitrate}kbps for {trackFormat}");
+                return ConversionResult.Blocked();
+            }
+
+            // Block bit depth upsampling for lossless formats
+            if (!AudioFormatHelper.IsLossyFormat(trackFormat) &&
+                !AudioFormatHelper.IsLossyFormat(rule.TargetFormat) &&
+                currentBitDepth.HasValue &&
+                rule.TargetBitDepth.HasValue &&
+                rule.TargetBitDepth.Value > currentBitDepth.Value)
+            {
+                _logger.Warn($"Blocked bit depth upsampling from {currentBitDepth}-bit to {rule.TargetBitDepth}-bit for {trackFormat}");
+                return ConversionResult.Blocked();
+            }
+
+            return ConversionResult.FromRule(rule);
+        }
+
+        private async Task<ConversionResult> GetTargetConversionForTrack(AudioFormat trackFormat, int? currentBitrate, TrackFile trackFile)
+        {
+            int? currentBitDepth = null;
+
+            // Get current bit depth for lossless formats
+            if (!AudioFormatHelper.IsLossyFormat(trackFormat))
+            {
+                currentBitDepth = await GetTrackBitDepthAsync(trackFile.Path);
+            }
+
+            // Check artist tag rule first
             ConversionRule? artistRule = GetArtistTagRule(trackFile);
             if (artistRule != null)
             {
-                if (artistRule.TargetFormat == AudioFormat.Unknown)
-                    return (AudioFormat.Unknown, null);
-
-                if (AudioFormatHelper.IsLossyFormat(trackFormat) && !AudioFormatHelper.IsLossyFormat(artistRule.TargetFormat))
-                {
-                    _logger.Warn($"Blocked lossy to lossless conversion from {trackFormat} to {artistRule.TargetFormat}");
-                    return (AudioFormat.Unknown, null);
-                }
+                ConversionResult result = ShouldBlockConversion(artistRule, trackFormat, currentBitrate, currentBitDepth);
+                if (result.IsBlocked)
+                    return result;
 
                 _logger.Debug($"Using artist tag rule for {trackFile.Artist?.Value?.Name}: {artistRule.TargetFormat}" +
-                             (artistRule.TargetBitrate.HasValue ? $":{artistRule.TargetBitrate}kbps" : ""));
-                return (artistRule.TargetFormat, artistRule.TargetBitrate);
+                             (artistRule.TargetBitrate.HasValue ? $":{artistRule.TargetBitrate}kbps" :
+                              artistRule.TargetBitDepth.HasValue ? $":{artistRule.TargetBitDepth}-bit" : "") +
+                             (artistRule.UseCBR ? ":cbr" : ""));
+                return result;
             }
 
+            // Check custom conversion rules
             foreach (KeyValuePair<string, string> ruleEntry in Settings.CustomConversion)
             {
                 if (!RuleParser.TryParseRule(ruleEntry.Key, ruleEntry.Value, out ConversionRule rule))
@@ -113,15 +198,14 @@ namespace Tubifarry.Metadata.Converter
                 if (!IsRuleMatching(rule, trackFormat, currentBitrate))
                     continue;
 
-                if (AudioFormatHelper.IsLossyFormat(trackFormat) && !AudioFormatHelper.IsLossyFormat(rule.TargetFormat))
-                {
-                    _logger.Warn($"Blocked lossy to lossless conversion from {trackFormat}");
-                    return (AudioFormat.Unknown, null);
-                }
+                ConversionResult result = ShouldBlockConversion(rule, trackFormat, currentBitrate, currentBitDepth);
+                if (result.IsBlocked)
+                    return result;
 
-                return (rule.TargetFormat, rule.TargetBitrate);
+                return result;
             }
-            return ((AudioFormat)Settings.TargetFormat, null);
+
+            return ConversionResult.Success((AudioFormat)Settings.TargetFormat);
         }
 
         private async Task<bool> ShouldConvertTrack(TrackFile trackFile)

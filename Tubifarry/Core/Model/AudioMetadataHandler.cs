@@ -93,6 +93,68 @@ namespace Tubifarry.Core.Model
             { AudioFormat.WMA, bitrate => [$"-b:a {bitrate}k"]}
         };
 
+        private static readonly Dictionary<AudioFormat, Func<int, string[]>> CBRQualityParameters = new()
+        {
+            {
+                AudioFormat.MP3,
+                bitrate => ["-b:a", $"{bitrate}k"]
+            },
+            {
+                AudioFormat.AAC,
+                bitrate => ["-b:a", $"{bitrate}k"]
+            },
+            {
+                AudioFormat.Opus,
+                bitrate => ["-b:a", $"{bitrate}k", "-vbr", "off"]
+            },
+            {
+                AudioFormat.MP4,
+                bitrate => ["-b:a", $"{bitrate}k"]
+            },
+            {
+                AudioFormat.AMR,
+                bitrate => ["-ab", $"{bitrate}k"]
+            },
+            {
+                AudioFormat.WMA,
+                bitrate => ["-b:a", $"{bitrate}k"]
+            }
+        };
+
+        private static readonly Dictionary<AudioFormat, Func<int, string[]>> BitDepthParameters = new()
+        {
+            {
+                AudioFormat.FLAC,
+                bitDepth => bitDepth switch
+                {
+                    16 => ["-sample_fmt", "s16"],
+                    24 => ["-sample_fmt", "s32", "-bits_per_raw_sample", "24"],
+                    32 => ["-sample_fmt", "s32"],
+                    _ => []
+                }
+            },
+            {
+                AudioFormat.WAV,
+                bitDepth => bitDepth switch
+                {
+                    16 => ["-codec:a", "pcm_s16le"],
+                    24 => ["-codec:a", "pcm_s24le"],
+                    32 => ["-codec:a", "pcm_s32le"],
+                    _ => []
+                }
+            },
+            {
+                AudioFormat.AIFF,
+                bitDepth => bitDepth switch
+                {
+                    16 => ["-codec:a", "pcm_s16be"],
+                    24 => ["-codec:a", "pcm_s24be"],
+                    32 => ["-codec:a", "pcm_s32be"],
+                    _ => []
+                }
+            }
+        };
+
         private static readonly string[] ExtractionParameters =
         [
             "-codec:a copy",
@@ -118,10 +180,11 @@ namespace Tubifarry.Core.Model
         /// <param name="audioFormat">Target audio format</param>
         /// <param name="targetBitrate">Optional target bitrate in kbps</param>
         /// <returns>True if conversion succeeded, false otherwise</returns>
-        public async Task<bool> TryConvertToFormatAsync(AudioFormat audioFormat, int? targetBitrate = null)
+        public async Task<bool> TryConvertToFormatAsync(AudioFormat audioFormat, int? targetBitrate = null, int? targetBitDepth = null, bool useCBR = false)
         {
             _logger?.Trace($"Converting {Path.GetFileName(TrackPath)} to {audioFormat}" +
-                          (targetBitrate.HasValue ? $" at {targetBitrate}kbps" : ""));
+                          (targetBitrate.HasValue ? $" at {targetBitrate}kbps" :
+                           targetBitDepth.HasValue ? $" at {targetBitDepth}-bit" : ""));
 
             if (!CheckFFmpegInstalled())
                 return false;
@@ -150,16 +213,45 @@ namespace Tubifarry.Core.Model
                 foreach (string parameter in BaseConversionParameters[audioFormat])
                     conversion.AddParameter(parameter);
 
-                if (AudioFormatHelper.IsLossyFormat(audioFormat) && QualityParameters.ContainsKey(audioFormat))
+                if (AudioFormatHelper.IsLossyFormat(audioFormat))
                 {
                     int bitrate = targetBitrate ?? AudioFormatHelper.GetDefaultBitrate(audioFormat);
                     bitrate = AudioFormatHelper.ClampBitrate(audioFormat, bitrate);
 
-                    string[] qualityParams = QualityParameters[audioFormat](bitrate);
+                    string[] qualityParams;
+                    string mode;
+
+                    if (useCBR && CBRQualityParameters.ContainsKey(audioFormat))
+                    {
+                        qualityParams = CBRQualityParameters[audioFormat](bitrate);
+                        mode = "CBR";
+                    }
+                    else if (QualityParameters.ContainsKey(audioFormat))
+                    {
+                        qualityParams = QualityParameters[audioFormat](bitrate);
+                        mode = "VBR";
+                    }
+                    else
+                    {
+                        qualityParams = [$"-b:a {bitrate}k"];
+                        mode = "fallback";
+                    }
+
                     foreach (string param in qualityParams)
                         conversion.AddParameter(param);
 
-                    _logger?.Trace($"Applied quality parameters for {audioFormat}: {string.Join(", ", qualityParams)}");
+                    _logger?.Trace($"Applied {mode} quality parameters for {audioFormat} at {bitrate}kbps: {string.Join(", ", qualityParams)}");
+                }
+
+                if (!AudioFormatHelper.IsLossyFormat(audioFormat) &&
+                    BitDepthParameters.ContainsKey(audioFormat) &&
+                    targetBitDepth.HasValue)
+                {
+                    string[] bitDepthParams = BitDepthParameters[audioFormat](targetBitDepth.Value);
+                    foreach (string param in bitDepthParams)
+                        conversion.AddParameter(param);
+
+                    _logger?.Trace($"Applied bit depth parameters for {audioFormat}: {targetBitDepth}-bit ({string.Join(", ", bitDepthParams)})");
                 }
 
                 _logger?.Trace($"Starting FFmpeg conversion");

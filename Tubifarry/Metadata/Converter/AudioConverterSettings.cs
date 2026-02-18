@@ -29,6 +29,10 @@ namespace Tubifarry.Metadata.Converter
                 .Must(customConversions => customConversions?.All(IsValidLossyConversion) != false)
                 .WithMessage("Lossy formats cannot be converted to non-lossy formats.");
 
+            RuleFor(x => x.CustomConversion)
+                .Must(customConversions => customConversions?.All(IsValidCBRUsage) != false)
+                .WithMessage("CBR flag is only applicable to lossy formats. Lossless formats are inherently variable bitrate.");
+
             RuleFor(x => x)
                 .Must(settings => IsValidStaticConversion(settings))
                 .WithMessage("Lossy formats cannot be converted to non-lossy formats.");
@@ -52,6 +56,19 @@ namespace Tubifarry.Metadata.Converter
 
             if (AudioFormatHelper.IsLossyFormat(parsedRule.SourceFormat) &&
                 !AudioFormatHelper.IsLossyFormat(parsedRule.TargetFormat))
+                return false;
+
+            return true;
+        }
+
+
+        private bool IsValidCBRUsage(KeyValuePair<string, string> rule)
+        {
+            if (!RuleParser.TryParseRule(rule.Key, rule.Value, out ConversionRule parsedRule))
+                return false;
+
+            // If CBR is specified, target must be a lossy format
+            if (parsedRule.UseCBR && !AudioFormatHelper.IsLossyFormat(parsedRule.TargetFormat))
                 return false;
 
             return true;
@@ -114,7 +131,7 @@ namespace Tubifarry.Metadata.Converter
         [FieldDefinition(8, Label = "Target Format", Type = FieldType.Select, SelectOptions = typeof(TargetAudioFormat), Section = MetadataSectionType.Metadata, HelpText = "Select the target format to convert audio files into.")]
         public int TargetFormat { get; set; } = (int)TargetAudioFormat.Opus;
 
-        [FieldDefinition(9, Label = "Custom Conversion Rules", Type = FieldType.KeyValueList, Section = MetadataSectionType.Metadata, HelpText = "Specify custom conversion rules with format and bitrate conditions. Examples: 'mp3 -> opus:128' (MP3 to Opus 128kbps), 'mp3<=128 -> aac:128' (MP3 ≤128kbps to AAC 128kbps), 'flac -> mp3' (FLAC to MP3).")]
+        [FieldDefinition(9, Label = "Custom Conversion Rules", Type = FieldType.KeyValueList, Section = MetadataSectionType.Metadata, HelpText = "Custom conversion rules. Examples: 'flac -> mp3:320:cbr' (FLAC to CBR MP3), 'mp3:320 -> mp3:128' (downsample), 'flac:24 -> flac:16' (reduce bit depth). Add ':cbr' for constant bitrate encoding. Upsampling is blocked automatically.")]
         public IEnumerable<KeyValuePair<string, string>> CustomConversion { get; set; } = [];
 
         public NzbDroneValidationResult Validate() => new(Validator.Validate(this));

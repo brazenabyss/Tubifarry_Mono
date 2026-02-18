@@ -6,6 +6,35 @@ using Tubifarry.Core.Utilities;
 
 namespace Tubifarry.Metadata.Converter
 {
+    public class ConversionResult
+    {
+        public AudioFormat TargetFormat { get; set; }
+        public int? TargetBitrate { get; set; }
+        public int? TargetBitDepth { get; set; }
+        public bool UseCBR { get; set; }
+        public bool IsBlocked { get; set; }
+
+        public static ConversionResult Blocked() => new() { IsBlocked = true, TargetFormat = AudioFormat.Unknown };
+
+        public static ConversionResult Success(AudioFormat format, int? bitrate = null, int? bitDepth = null, bool useCBR = false) => new()
+        {
+            TargetFormat = format,
+            TargetBitrate = bitrate,
+            TargetBitDepth = bitDepth,
+            UseCBR = useCBR,
+            IsBlocked = false
+        };
+
+        public static ConversionResult FromRule(ConversionRule rule) => new()
+        {
+            TargetFormat = rule.TargetFormat,
+            TargetBitrate = rule.TargetBitrate,
+            TargetBitDepth = rule.TargetBitDepth,
+            UseCBR = rule.UseCBR,
+            IsBlocked = false
+        };
+    }
+
     public class ConversionRule
     {
         public AudioFormat SourceFormat { get; set; }
@@ -13,6 +42,8 @@ namespace Tubifarry.Metadata.Converter
         public int? SourceBitrateValue { get; set; }
         public AudioFormat TargetFormat { get; set; }
         public int? TargetBitrate { get; set; }
+        public int? TargetBitDepth { get; set; }
+        public bool UseCBR { get; set; }
         public bool IsArtistRule { get; set; }
 
         // Track the type of category rule
@@ -91,7 +122,13 @@ namespace Tubifarry.Metadata.Converter
         {
             string target = TargetFormat.ToString();
             if (TargetBitrate.HasValue)
+            {
                 target += ":" + TargetBitrate.Value.ToString();
+                if (UseCBR)
+                    target += ":cbr";
+            }
+            else if (TargetBitDepth.HasValue)
+                target += ":" + TargetBitDepth.Value.ToString();
             return target;
         }
     }
@@ -304,7 +341,26 @@ namespace Tubifarry.Metadata.Converter
                 return false;
             }
 
-            return ParseTargetFormat(targetMatch.Groups[1].Value, rule) && (!targetMatch.Groups[2].Success || ParseTargetBitrate(targetMatch.Groups[2].Value, rule));
+            if (!ParseTargetFormat(targetMatch.Groups[1].Value, rule))
+                return false;
+
+            if (targetMatch.Groups[2].Success && !ParseTargetBitrate(targetMatch.Groups[2].Value, rule))
+                return false;
+
+            // Check for CBR flag (Group 3)
+            if (targetMatch.Groups[3].Success && targetMatch.Groups[3].Value == "cbr")
+            {
+                // CBR only makes sense for lossy formats
+                if (!AudioFormatHelper.IsLossyFormat(rule.TargetFormat))
+                {
+                    _logger.Warn("CBR flag is not applicable to lossless format {0}. Lossless formats are inherently variable bitrate.", rule.TargetFormat);
+                    return false;
+                }
+                
+                rule.UseCBR = true;
+            }
+
+            return true;
         }
 
         private static bool ParseTargetFormat(string formatName, ConversionRule rule)
@@ -327,28 +383,40 @@ namespace Tubifarry.Metadata.Converter
 
         private static bool ParseTargetBitrate(string bitrateStr, ConversionRule rule)
         {
-            if (!int.TryParse(bitrateStr, out int targetBitrate))
+            if (!int.TryParse(bitrateStr, out int targetValue))
             {
-                _logger.Debug("Invalid target bitrate value: {0}", bitrateStr);
+                _logger.Debug("Invalid target value: {0}", bitrateStr);
                 return false;
             }
 
-            int clampedBitrate = AudioFormatHelper.ClampBitrate(rule.TargetFormat, targetBitrate);
-            if (clampedBitrate != targetBitrate)
+            if (!AudioFormatHelper.IsLossyFormat(rule.TargetFormat))
+            {
+                if (targetValue != 16 && targetValue != 24 && targetValue != 32)
+                {
+                    _logger.Warn("Invalid bit depth {0} for lossless format {1}. Must be 16, 24, or 32",
+                        targetValue, rule.TargetFormat);
+                    return false;
+                }
+                rule.TargetBitDepth = targetValue;
+                return true;
+            }
+
+            int clampedBitrate = AudioFormatHelper.ClampBitrate(rule.TargetFormat, targetValue);
+            if (clampedBitrate != targetValue)
             {
                 _logger.Debug("Target bitrate ({0}) outside of valid range for format {1}",
-                    targetBitrate, rule.TargetFormat);
+                    targetValue, rule.TargetFormat);
                 return false;
             }
 
-            rule.TargetBitrate = AudioFormatHelper.RoundToStandardBitrate(targetBitrate);
+            rule.TargetBitrate = AudioFormatHelper.RoundToStandardBitrate(targetValue);
             return true;
         }
 
         [GeneratedRegex(@"^([a-zA-Z0-9]+)(?:([!<>=]{1,2})(\d+))?$", RegexOptions.Compiled)]
         private static partial Regex SourceFormatRegex();
 
-        [GeneratedRegex(@"^([a-zA-Z0-9]+)(?::(\d+)k?)?$", RegexOptions.Compiled)]
+        [GeneratedRegex(@"^([a-zA-Z0-9]+)(?::(\d+)k?)?(?::(cbr))?$", RegexOptions.Compiled)]
         private static partial Regex TargetFormatRegex();
 
         [GeneratedRegex(@"^([a-zA-Z]+)(?:-(\d+)k?)?$", RegexOptions.Compiled)]
