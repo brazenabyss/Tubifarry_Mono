@@ -7,6 +7,7 @@ using NzbDrone.Core.Parser;
 using NzbDrone.Core.ThingiProvider;
 using Tubifarry.Core.Records;
 using Tubifarry.Core.Replacements;
+using Tubifarry.Core.Telemetry;
 using Tubifarry.Core.Utilities;
 using Tubifarry.Download.Clients.YouTube;
 
@@ -39,8 +40,9 @@ namespace Tubifarry.Indexers.YouTube
             IIndexerStatusService indexerStatusService,
             IConfigService configService,
             IParsingService parsingService,
+            ISentryHelper sentry,
             Logger logger)
-            : base(httpClient, indexerStatusService, configService, parsingService, logger)
+            : base(httpClient, indexerStatusService, configService, parsingService, sentry, logger)
         {
             _parser = new(this);
             _requestGenerator = new(this);

@@ -1,4 +1,4 @@
-﻿using FluentValidation.Results;
+using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
@@ -14,6 +14,7 @@ using NzbDrone.Core.RemotePathMappings;
 using System.Net;
 using System.Text.Json;
 using Tubifarry.Core.Model;
+using Tubifarry.Core.Telemetry;
 using Tubifarry.Indexers.Soulseek;
 
 namespace Tubifarry.Download.Clients.Soulseek
@@ -23,6 +24,7 @@ namespace Tubifarry.Download.Clients.Soulseek
         private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
         private readonly IHttpClient _httpClient;
         private readonly IDownloadHistoryService _downloadService;
+        private readonly ISentryHelper _sentry;
 
         private static readonly Dictionary<DownloadKey<int, string>, SlskdDownloadItem> _downloadMappings = [];
         private static DateTime _lastCacheUpdateTime = DateTime.MinValue;
@@ -31,15 +33,21 @@ namespace Tubifarry.Download.Clients.Soulseek
         public override string Name => "Slskd";
         public override string Protocol => nameof(SoulseekDownloadProtocol);
 
-        public SlskdClient(IHttpClient httpClient, IDownloadHistoryService downloadService, IConfigService configService, IDiskProvider diskProvider, IRemotePathMappingService remotePathMappingService, ILocalizationService localizationService, Logger logger)
+        public SlskdClient(IHttpClient httpClient, IDownloadHistoryService downloadService, IConfigService configService, IDiskProvider diskProvider, IRemotePathMappingService remotePathMappingService, ILocalizationService localizationService, ISentryHelper sentry, Logger logger)
             : base(configService, diskProvider, remotePathMappingService, localizationService, logger)
         {
             _httpClient = httpClient;
             _downloadService = downloadService;
+            _sentry = sentry;
         }
 
         public override async Task<string> Download(RemoteAlbum remoteAlbum, IIndexer indexer)
         {
+            ISpan? span = _sentry.StartSpan("slskd.download");
+            _sentry.SetSpanData(span, "album.title", remoteAlbum.Release.Album);
+            _sentry.SetSpanData(span, "album.artist", remoteAlbum.Release.Artist);
+            _sentry.SetSpanData(span, "file_count", remoteAlbum.Release.DownloadUrl.Split(',').Length);
+
             SlskdDownloadItem item = new(remoteAlbum.Release);
             _logger.Trace($"Download initiated: {remoteAlbum.Release.Title} | Files: {item.FileData.Count}");
             try
@@ -51,9 +59,11 @@ namespace Tubifarry.Download.Clients.Soulseek
                     throw new DownloadClientException("Failed to create download.");
                 item.FileStateChanged += FileStateChanged;
                 AddDownloadItem(item);
+                _sentry.SetSpanTag(span, "download.id", item.ID);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                _sentry.FinishSpan(span, ex);
                 try
                 {
                     RemoveItemAsync(item).Wait();
@@ -75,6 +85,10 @@ namespace Tubifarry.Download.Clients.Soulseek
 
         private async Task RetryDownloadAsync(SlskdFileState fileState, SlskdDownloadItem item)
         {
+            ISpan? span = _sentry.StartSpan("slskd.retry");
+            _sentry.SetSpanData(span, "file.name", Path.GetFileName(fileState.File.Filename));
+            _sentry.SetSpanData(span, "retry.attempt", fileState.RetryCount + 1);
+
             try
             {
                 using JsonDocument doc = JsonDocument.Parse(item.ReleaseInfo.Source);
@@ -91,10 +105,13 @@ namespace Tubifarry.Download.Clients.Soulseek
 
                 if (response.StatusCode == HttpStatusCode.Created)
                     _logger.Trace($"Successfully retried download for file: {fileState.File.Filename}");
+
+                _sentry.FinishSpan(span, SpanStatus.Ok);
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, $"Failed to retry download for file: {fileState.File.Filename}");
+                _sentry.FinishSpan(span, ex);
             }
             fileState.IncrementAttempt();
         }

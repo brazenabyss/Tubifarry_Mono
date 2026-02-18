@@ -1,4 +1,4 @@
-﻿using FluentValidation.Results;
+using FluentValidation.Results;
 using Newtonsoft.Json;
 using NLog;
 using NzbDrone.Common.Extensions;
@@ -8,6 +8,7 @@ using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser;
 using System.Net;
 using Tubifarry.Core.Replacements;
+using Tubifarry.Core.Telemetry;
 using Tubifarry.Core.Utilities;
 using Tubifarry.Indexers.Soulseek.Search.Core;
 
@@ -27,11 +28,11 @@ namespace Tubifarry.Indexers.Soulseek
 
         internal new SlskdSettings Settings => base.Settings;
 
-        public SlskdIndexer(IHttpClient httpClient, Lazy<IIndexerFactory> indexerFactory, IIndexerStatusService indexerStatusService, ISlskdSearchChain slskdSearchChain, IConfigService configService, IParsingService parsingService, Logger logger)
-          : base(httpClient, indexerStatusService, configService, parsingService, logger)
+        public SlskdIndexer(IHttpClient httpClient, Lazy<IIndexerFactory> indexerFactory, IIndexerStatusService indexerStatusService, ISlskdSearchChain slskdSearchChain, IConfigService configService, IParsingService parsingService, ISentryHelper sentry, Logger logger)
+          : base(httpClient, indexerStatusService, configService, parsingService, sentry, logger)
         {
             _parseIndexerResponse = new SlskdIndexerParser(this, indexerFactory, httpClient);
-            _indexerRequestGenerator = new SlskdRequestGenerator(this, slskdSearchChain, httpClient);
+            _indexerRequestGenerator = new SlskdRequestGenerator(this, slskdSearchChain, httpClient, sentry);
         }
 
         protected override async Task Test(List<ValidationFailure> failures) => failures.AddIfNotNull(await TestConnection());

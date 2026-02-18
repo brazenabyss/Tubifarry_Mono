@@ -1,4 +1,5 @@
 using NLog;
+using NLog.Config;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Messaging.Commands;
@@ -12,11 +13,16 @@ using NzbDrone.Core.Plugins.Commands;
 using NzbDrone.Core.Profiles.Delay;
 using Tubifarry.Core.Utilities;
 
+#if !MASTER_BRANCH
+using Tubifarry.Core.Telemetry;
+#endif
+
 namespace Tubifarry
 {
     public class Tubifarry : Plugin
-#if! MASTER_BRANCH
+#if !MASTER_BRANCH
         , IHandle<ApplicationStartingEvent>
+        , IHandle<ApplicationShutdownRequested>
 #endif
     {
         private readonly Logger _logger;
@@ -77,6 +83,27 @@ namespace Tubifarry
 
         public void Handle(ApplicationStartingEvent message)
         {
+#if !MASTER_BRANCH
+            TubifarrySentry.Initialize();
+
+            if (TubifarrySentry.IsEnabled)
+            {
+                TubifarrySentryTarget target = new TubifarrySentryTarget
+                {
+                    Name = "tubifarry",
+                    Layout = "${message}",
+                    Enabled = true,
+                    MinimumBreadcrumbLevel = LogLevel.Debug,
+                    MinimumEventLevel = LogLevel.Error
+                };
+
+                LoggingRule rule = new LoggingRule("Tubifarry*", LogLevel.Warn, target);
+                LogManager.Configuration.AddTarget(target);
+                LogManager.Configuration.LoggingRules.Add(rule);
+                LogManager.ReconfigExistingLoggers();
+            }
+#endif
+
 #if CI
             AvailableVersion = _pluginService.Value.GetRemotePlugin(GithubUrl).Version;
             if (AvailableVersion > InstalledVersion)
@@ -106,5 +133,12 @@ namespace Tubifarry
                 _logger.Debug($"Average runtime between restarts is {AverageRuntime.TotalDays:F2} days");
             }
         }
+
+#if !MASTER_BRANCH
+        public void Handle(ApplicationShutdownRequested message)
+        {
+            TubifarrySentry.Shutdown();
+        }
+#endif
     }
 }

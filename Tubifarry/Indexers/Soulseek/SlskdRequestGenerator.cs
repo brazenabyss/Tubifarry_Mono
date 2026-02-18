@@ -8,7 +8,9 @@ using NzbDrone.Core.Music;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Sentry;
 using Tubifarry.Core.Replacements;
+using Tubifarry.Core.Telemetry;
 using Tubifarry.Core.Utilities;
 using Tubifarry.Indexers.Soulseek.Search.Core;
 
@@ -21,15 +23,17 @@ namespace Tubifarry.Indexers.Soulseek
         private readonly Logger _logger;
         private readonly IHttpClient _client;
         private readonly ISlskdSearchChain _searchPipeline;
+        private readonly ISentryHelper _sentry;
         private readonly HashSet<string> _processedSearches = new(StringComparer.OrdinalIgnoreCase);
 
         private SlskdSettings Settings => _indexer.Settings;
 
-        public SlskdRequestGenerator(SlskdIndexer indexer, ISlskdSearchChain searchPipeline, IHttpClient client)
+        public SlskdRequestGenerator(SlskdIndexer indexer, ISlskdSearchChain searchPipeline, IHttpClient client, ISentryHelper sentry)
         {
             _indexer = indexer;
             _client = client;
             _searchPipeline = searchPipeline;
+            _sentry = sentry;
             _logger = NzbDroneLogger.GetLogger(this);
         }
 
@@ -98,12 +102,18 @@ namespace Tubifarry.Indexers.Soulseek
             if (string.IsNullOrWhiteSpace(searchText))
                 return [];
 
+            var span = _sentry.StartSpan("slskd.search");
+            _sentry.SetSpanData(span, "search.query", searchText);
+            _sentry.SetSpanData(span, "search.artist", query.Artist);
+            _sentry.SetSpanData(span, "search.album", query.Album);
+
             try
             {
                 IndexerRequest? request = GetRequestsAsync(query, searchText).GetAwaiter().GetResult();
                 if (request != null)
                 {
                     _logger.Trace($"Successfully generated request for search: {searchText}");
+                    _sentry.FinishSpan(span, SpanStatus.Ok);
                     return [request];
                 }
                 else
@@ -114,6 +124,7 @@ namespace Tubifarry.Indexers.Soulseek
             catch (Exception ex)
             {
                 _logger.Error(ex, $"Error executing search: {searchText}");
+                _sentry.FinishSpan(span, ex);
             }
 
             return [];

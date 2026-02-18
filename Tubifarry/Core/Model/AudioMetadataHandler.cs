@@ -1,4 +1,4 @@
-﻿using NLog;
+using NLog;
 using NzbDrone.Common.Instrumentation;
 using NzbDrone.Core.Music;
 using Tubifarry.Core.Records;
