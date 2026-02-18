@@ -35,7 +35,8 @@ namespace Tubifarry
             typeof(SoulseekDownloadProtocol),
             typeof(LucidaDownloadProtocol),
             typeof(QobuzDownloadProtocol),
-            typeof(SubSonicDownloadProtocol)];
+            typeof(SubSonicDownloadProtocol),
+            typeof(AmazonMusicDownloadProtocol)];
 
         public static TimeSpan AverageRuntime { get; private set; } = TimeSpan.FromDays(4);
         public static DateTime LastStarted { get; private set; } = DateTime.UtcNow;

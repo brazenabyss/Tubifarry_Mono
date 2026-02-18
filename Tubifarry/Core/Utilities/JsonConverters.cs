@@ -44,6 +44,26 @@ namespace Tubifarry.Core.Utilities
     }
 
     /// <summary>
+    /// Custom JSON converter that handles both boolean and string boolean values
+    /// </summary>
+    public class BooleanConverter : JsonConverter<bool>
+    {
+        public override bool Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            return reader.TokenType switch
+            {
+                JsonTokenType.True => true,
+                JsonTokenType.False => false,
+                JsonTokenType.String => bool.TryParse(reader.GetString(), out bool result) && result,
+                JsonTokenType.Number => reader.GetInt32() != 0,
+                _ => throw new JsonException($"Cannot convert token type {reader.TokenType} to boolean")
+            };
+        }
+
+        public override void Write(Utf8JsonWriter writer, bool value, JsonSerializerOptions options) => writer.WriteBooleanValue(value);
+    }
+
+    /// <summary>
     /// Converts Unix timestamps (milliseconds) to DateTime
     /// </summary>
     internal class UnixTimestampConverter : JsonConverter<DateTime?>

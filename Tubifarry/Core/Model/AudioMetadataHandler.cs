@@ -343,6 +343,58 @@ namespace Tubifarry.Core.Model
             }
         }
 
+
+        /// <summary>
+        /// Decrypts an encrypted audio file using FFmpeg with the provided decryption key.
+        /// </summary>
+        /// <param name="decryptionKey">The hex decryption key for the encrypted content.</param>
+        /// <param name="codec">The audio codec of the content (e.g., "flac", "opus", "eac3").</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>True if decryption was successful, false otherwise.</returns>
+        public async Task<bool> TryDecryptAsync(string decryptionKey, string? codec, CancellationToken token = default)
+        {
+            if (string.IsNullOrEmpty(decryptionKey))
+                return true;
+
+            if (!CheckFFmpegInstalled())
+                return false;
+
+            _logger?.Trace($"Decrypting file: {Path.GetFileName(TrackPath)}");
+
+            try
+            {
+                AudioFormat format = AudioFormatHelper.GetAudioFormatFromCodec(codec ?? "aac");
+                string extension = AudioFormatHelper.GetFileExtensionForFormat(format);
+                string outputPath = Path.ChangeExtension(TrackPath, extension);
+                string tempOutput = Path.ChangeExtension(TrackPath, $".dec{extension}");
+
+                if (File.Exists(tempOutput))
+                    File.Delete(tempOutput);
+
+                IConversion conversion = FFmpeg.Conversions.New()
+                    .AddParameter($"-decryption_key {decryptionKey}")
+                    .AddParameter($"-i \"{TrackPath}\"")
+                    .AddParameter("-c copy")
+                    .SetOutput(tempOutput);
+
+                await conversion.Start(token);
+
+                if (File.Exists(TrackPath))
+                    File.Delete(TrackPath);
+
+                File.Move(tempOutput, outputPath, true);
+                TrackPath = outputPath;
+
+                _logger?.Trace($"Successfully decrypted: {Path.GetFileName(TrackPath)}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(ex, $"Failed to decrypt file: {TrackPath}");
+                return false;
+            }
+        }
+
         public async Task<bool> TryCreateLrcFileAsync(CancellationToken token)
         {
             if (Lyric?.SyncedLyrics == null)
