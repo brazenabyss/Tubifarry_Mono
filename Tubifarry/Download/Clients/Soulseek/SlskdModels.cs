@@ -257,7 +257,7 @@ namespace Tubifarry.Download.Clients.Soulseek
 
         public List<SlskdFileData> ToSlskdFileDataList() => Files?.Select(f => f.ToSlskdFileData()).ToList() ?? [];
 
-        public SlskdFolderData CreateFolderData(string username) => SlskdItemsParser.ParseFolderName(Directory) with
+        public SlskdFolderData CreateFolderData(string username, ISlskdItemsParser slskdItemsParser) => slskdItemsParser.ParseFolderName(Directory) with
         {
             Username = username,
             HasFreeUploadSlot = true,

@@ -19,18 +19,20 @@ namespace Tubifarry.Indexers.Soulseek
         private readonly Logger _logger;
         private readonly Lazy<IIndexerFactory> _indexerFactory;
         private readonly IHttpClient _httpClient;
+        private readonly ISlskdItemsParser _itemsParser;
 
         private static readonly Dictionary<int, string> _interactiveResults = [];
         private static readonly Dictionary<string, (HashSet<string> IgnoredUsers, long LastFileSize)> _ignoreListCache = new();
 
         private SlskdSettings Settings => _indexer.Settings;
 
-        public SlskdIndexerParser(SlskdIndexer indexer, Lazy<IIndexerFactory> indexerFactory, IHttpClient httpClient)
+        public SlskdIndexerParser(SlskdIndexer indexer, Lazy<IIndexerFactory> indexerFactory, IHttpClient httpClient, ISlskdItemsParser itemsParser)
         {
             _indexer = indexer;
             _indexerFactory = indexerFactory;
             _logger = NzbDroneLogger.GetLogger(this);
             _httpClient = httpClient;
+            _itemsParser = itemsParser;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
@@ -61,7 +63,7 @@ namespace Tubifarry.Indexers.Soulseek
                         if (string.IsNullOrEmpty(directoryGroup.Key))
                             continue;
 
-                        SlskdFolderData folderData = SlskdItemsParser.ParseFolderName(directoryGroup.Key) with
+                        SlskdFolderData folderData = _itemsParser.ParseFolderName(directoryGroup.Key) with
                         {
                             Username = response.Username,
                             HasFreeUploadSlot = response.HasFreeUploadSlot,
@@ -100,7 +102,7 @@ namespace Tubifarry.Indexers.Soulseek
                             }
                         }
 
-                        AlbumData albumData = SlskdItemsParser.CreateAlbumData(searchResponse.Id, finalGroup, searchTextData, folderData, Settings, searchTextData.MinimumFiles);
+                        AlbumData albumData = _itemsParser.CreateAlbumData(searchResponse.Id, finalGroup, searchTextData, folderData, Settings, searchTextData.MinimumFiles);
                         albumDatas.Add(albumData);
                     }
                 }

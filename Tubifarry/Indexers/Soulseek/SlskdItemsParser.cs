@@ -1,17 +1,18 @@
-﻿using FuzzySharp;
+using FuzzySharp;
 using Newtonsoft.Json;
 using NLog;
-using NzbDrone.Common.Instrumentation;
 using NzbDrone.Core.Indexers;
 using System.Text.RegularExpressions;
 using Tubifarry.Core.Model;
+using Tubifarry.Core.Telemetry;
 using Tubifarry.Core.Utilities;
 
 namespace Tubifarry.Indexers.Soulseek
 {
-    public static partial class SlskdItemsParser
+    public partial class SlskdItemsParser : ISlskdItemsParser
     {
-        private static readonly Logger Logger = NzbDroneLogger.GetLogger(typeof(SlskdItemsParser));
+        private readonly Logger _logger;
+        private readonly ISentryHelper _sentry;
 
         private static readonly Dictionary<string, string> _textNumbers = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -32,7 +33,13 @@ namespace Tubifarry.Indexers.Soulseek
             "pop", "rock", "jazz", "classical", "various", "downloads"
         ];
 
-        public static SlskdFolderData ParseFolderName(string folderPath)
+        public SlskdItemsParser(ISentryHelper sentry, Logger logger)
+        {
+            _sentry = sentry;
+            _logger = logger;
+        }
+
+        public SlskdFolderData ParseFolderName(string folderPath)
         {
             string[] pathComponents = SplitPathIntoComponents(folderPath);
             (string? artist, string? album, string? year) = ParseFromRegexPatterns(pathComponents);
@@ -60,17 +67,23 @@ namespace Tubifarry.Indexers.Soulseek
                 Files: []);
         }
 
-        public static AlbumData CreateAlbumData(string searchId, IGrouping<string, SlskdFileData> directory, SlskdSearchData searchData, SlskdFolderData folderData, SlskdSettings? settings = null, int expectedTrackCount = 0)
+        public AlbumData CreateAlbumData(string searchId, IGrouping<string, SlskdFileData> directory, SlskdSearchData searchData, SlskdFolderData folderData, SlskdSettings? settings = null, int expectedTrackCount = 0)
         {
             string dirNameNorm = NormalizeString(directory.Key);
             string searchArtistNorm = NormalizeString(searchData.Artist ?? "");
             string searchAlbumNorm = NormalizeString(searchData.Album ?? "");
 
-            Logger.Trace($"Creating album data - Dir: '{dirNameNorm}', Search artist: '{searchArtistNorm}', Search album: '{searchAlbumNorm}'");
+            _logger.Trace($"Creating album data - Dir: '{dirNameNorm}', Search artist: '{searchArtistNorm}', Search album: '{searchAlbumNorm}'");
+
+            // Calculate fuzzy scores for tracking
+            int fuzzyArtistPartial = !string.IsNullOrEmpty(searchArtistNorm) ? Fuzz.PartialRatio(dirNameNorm, searchArtistNorm) : 0;
+            int fuzzyArtistTokenSort = !string.IsNullOrEmpty(searchArtistNorm) ? Fuzz.TokenSortRatio(dirNameNorm, searchArtistNorm) : 0;
+            int fuzzyAlbumPartial = !string.IsNullOrEmpty(searchAlbumNorm) ? Fuzz.PartialRatio(dirNameNorm, searchAlbumNorm) : 0;
+            int fuzzyAlbumTokenSort = !string.IsNullOrEmpty(searchAlbumNorm) ? Fuzz.TokenSortRatio(dirNameNorm, searchAlbumNorm) : 0;
 
             bool isVolumeSearch = !string.IsNullOrEmpty(searchData.Album) && VolumeRegex().Match(searchData.Album).Success;
 
-            bool isAlbumMatch = isVolumeSearch ? CheckVolumeSeriesMatch(directory.Key, searchData.Album) : !string.IsNullOrEmpty(searchAlbumNorm) && (Fuzz.PartialRatio(dirNameNorm, searchAlbumNorm) > 85 || Fuzz.TokenSortRatio(dirNameNorm, searchAlbumNorm) > 80);
+            bool isAlbumMatch = isVolumeSearch ? CheckVolumeSeriesMatch(directory.Key, searchData.Album) : !string.IsNullOrEmpty(searchAlbumNorm) && (fuzzyAlbumPartial > 85 || fuzzyAlbumTokenSort > 80);
             bool isArtistMatch = IsFuzzyArtistMatch(dirNameNorm, searchArtistNorm);
 
             if (!isArtistMatch && !isAlbumMatch && !string.IsNullOrEmpty(searchData.Artist) && !string.IsNullOrEmpty(searchData.Album))
@@ -79,7 +92,7 @@ namespace Tubifarry.Indexers.Soulseek
                 isAlbumMatch = Fuzz.PartialRatio(dirNameNorm, combinedSearch) > 85;
             }
 
-            Logger.Debug($"Match results - Artist: {isArtistMatch}, Album: {isAlbumMatch}");
+            _logger.Debug($"Match results - Artist: {isArtistMatch}, Album: {isAlbumMatch}");
 
             // Determine final values for artist, album, year
             string finalArtist = DetermineFinalArtist(isArtistMatch, folderData, searchData);
@@ -90,11 +103,37 @@ namespace Tubifarry.Indexers.Soulseek
             string qualityInfo = FormatQualityInfo(Codec, BitRate, BitDepth, SampleRate);
 
             List<SlskdFileData>? filesToDownload = directory.GroupBy(f => f.Filename?[..f.Filename.LastIndexOf('\\')]).FirstOrDefault(g => g.Key == directory.Key)?.ToList();
+            int actualTrackCount = filesToDownload?.Count ?? 0;
 
-            Logger.Trace($"Audio: {Codec}, BitRate: {BitRate}, BitDepth: {BitDepth}, Files: {filesToDownload?.Count ?? 0}");
+            _logger.Trace($"Audio: {Codec}, BitRate: {BitRate}, BitDepth: {BitDepth}, Files: {actualTrackCount}");
 
             string infoUrl = settings != null ? $"{(string.IsNullOrEmpty(settings.ExternalUrl) ? settings.BaseUrl : settings.ExternalUrl)}/searches/{searchId}" : "";
             string? edition = ExtractEdition(folderData.Path)?.ToUpper();
+
+            int priority = folderData.CalculatePriority(expectedTrackCount);
+
+            string regexMatchType = DetermineRegexMatchType(folderData.Path);
+            List<string>? directoryFiles = filesToDownload?.Select(f => f.Filename ?? "").Where(f => !string.IsNullOrEmpty(f)).ToList();
+
+            _sentry.LogParseResult(
+                searchId,
+                folderData.Path,
+                regexMatchType,
+                fuzzyArtistPartial,
+                fuzzyAlbumPartial,
+                fuzzyArtistTokenSort,
+                fuzzyAlbumTokenSort,
+                priority,
+                Codec.ToString(),
+                BitRate ?? 0,
+                BitDepth ?? 0,
+                expectedTrackCount,
+                actualTrackCount,
+                folderData.Username,
+                folderData.HasFreeUploadSlot,
+                folderData.QueueLength,
+                directoryFiles,
+                searchData.Interactive);
 
             return new AlbumData("Slskd", nameof(SoulseekDownloadProtocol))
             {
@@ -113,7 +152,7 @@ namespace Tubifarry.Indexers.Soulseek
                 Size = TotalSize,
                 InfoUrl = infoUrl,
                 ExplicitContent = ExtractExplicitTag(folderData.Path),
-                Priotity = folderData.CalculatePriority(expectedTrackCount),
+                Priotity = priority,
                 CustomString = JsonConvert.SerializeObject(filesToDownload),
                 ExtraInfo = [edition, $"👤 {folderData.Username} ", $"{(folderData.HasFreeUploadSlot ? "⚡" : "❌")} {folderData.UploadSpeed / 1024.0 / 1024.0:F2}MB/s ", folderData.QueueLength == 0 ? "" : $"📋 {folderData.QueueLength}"],
                 Duration = TotalDuration
@@ -175,7 +214,7 @@ namespace Tubifarry.Indexers.Soulseek
             return null;
         }
 
-        private static bool CheckVolumeSeriesMatch(string directoryPath, string? searchAlbum)
+        private bool CheckVolumeSeriesMatch(string directoryPath, string? searchAlbum)
         {
             if (string.IsNullOrEmpty(searchAlbum))
                 return false;
@@ -203,9 +242,9 @@ namespace Tubifarry.Indexers.Soulseek
             return baseAlbumMatch && normSearchVol.Equals(normDirVol, StringComparison.OrdinalIgnoreCase);
         }
 
-        public static string NormalizeVolume(string volume)
+        public string NormalizeVolume(string volume)
         {
-            Logger.Trace($"Normalizing volume: '{volume}'");
+            _logger.Trace($"Normalizing volume: '{volume}'");
 
             if (_textNumbers.TryGetValue(volume, out string? textNum))
                 return textNum;
@@ -239,7 +278,7 @@ namespace Tubifarry.Indexers.Soulseek
                 .Replace("DCCCC", "CM");  // 900
         }
 
-        private static int ConvertRomanToNumber(string roman)
+        private int ConvertRomanToNumber(string roman)
         {
             roman = roman.ToUpperInvariant();
             int total = 0;
@@ -261,7 +300,7 @@ namespace Tubifarry.Indexers.Soulseek
             if (total <= 0 || total > 5000)
                 return 0;
 
-            Logger.Trace($"Roman numeral '{roman}' converted to: {total}");
+            _logger.Trace($"Roman numeral '{roman}' converted to: {total}");
             return total;
         }
 
@@ -284,18 +323,18 @@ namespace Tubifarry.Indexers.Soulseek
             return ReduceWhitespaceRegex().Replace(component.Trim(), " ");
         }
 
-        private static bool ExtractExplicitTag(string path)
+        private bool ExtractExplicitTag(string path)
         {
             Match match = ExplicitTagRegex().Match(path);
             if (match.Success)
             {
                 if (match.Groups["negation"].Success && !string.IsNullOrWhiteSpace(match.Groups["negation"].Value))
                 {
-                    Logger.Trace($"Found negated explicit tag in path, skipping: {match.Value}");
+                    _logger.Trace($"Found negated explicit tag in path, skipping: {match.Value}");
                     return false;
                 }
 
-                Logger.Trace($"Extracted explicit tag from path: {path}");
+                _logger.Trace($"Extracted explicit tag from path: {path}");
                 return true;
             }
             return false;
@@ -327,6 +366,26 @@ namespace Tubifarry.Indexers.Soulseek
             !string.IsNullOrEmpty(searchAlbumNorm) &&
             (volumeMatch || Fuzz.PartialRatio(dirNameNorm, searchAlbumNorm) > 85 || Fuzz.TokenSortRatio(dirNameNorm, searchAlbumNorm) > 80);
 
+        public static string DetermineRegexMatchType(string folderPath)
+        {
+            string[] pathComponents = SplitPathIntoComponents(folderPath);
+            if (pathComponents.Length == 0)
+                return "none";
+
+            string lastComponent = pathComponents[^1];
+
+            if (TryMatchRegex(lastComponent, ArtistAlbumYearRegex()) != null)
+                return "ArtistAlbumYear";
+
+            if (TryMatchRegex(lastComponent, YearArtistAlbumRegex()) != null)
+                return "YearArtistAlbum";
+
+            if (TryMatchRegex(lastComponent, AlbumYearRegex()) != null)
+                return "AlbumYear";
+
+            return "none";
+        }
+
         private static string DetermineFinalArtist(bool isArtistMatch, SlskdFolderData folderData, SlskdSearchData searchData)
         {
             if (isArtistMatch && !string.IsNullOrEmpty(searchData.Artist))
@@ -349,7 +408,7 @@ namespace Tubifarry.Indexers.Soulseek
             return searchData.Album ?? "Unknown Album";
         }
 
-        private static (AudioFormat Codec, int? BitRate, int? BitDepth, int? SampleRate, long TotalSize, int TotalDuration) AnalyzeAudioQuality(IGrouping<string, SlskdFileData> directory)
+        private (AudioFormat Codec, int? BitRate, int? BitDepth, int? SampleRate, long TotalSize, int TotalDuration) AnalyzeAudioQuality(IGrouping<string, SlskdFileData> directory)
         {
             string? commonExt = GetMostCommonExtension(directory);
             long totalSize = directory.Sum(f => f.Size);
@@ -362,7 +421,7 @@ namespace Tubifarry.Indexers.Soulseek
             if (!commonBitRate.HasValue && totalDuration > 0)
             {
                 commonBitRate = (int)(totalSize * 8 / (totalDuration * 1000));
-                Logger.Trace($"Calculated bitrate: {commonBitRate}");
+                _logger.Trace($"Calculated bitrate: {commonBitRate}");
             }
 
             AudioFormat codec = AudioFormatHelper.GetAudioCodecFromExtension(commonExt ?? "");

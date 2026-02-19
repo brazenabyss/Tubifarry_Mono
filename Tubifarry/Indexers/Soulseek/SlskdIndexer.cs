@@ -28,10 +28,10 @@ namespace Tubifarry.Indexers.Soulseek
 
         internal new SlskdSettings Settings => base.Settings;
 
-        public SlskdIndexer(IHttpClient httpClient, Lazy<IIndexerFactory> indexerFactory, IIndexerStatusService indexerStatusService, ISlskdSearchChain slskdSearchChain, IConfigService configService, IParsingService parsingService, ISentryHelper sentry, Logger logger)
+        public SlskdIndexer(IHttpClient httpClient, Lazy<IIndexerFactory> indexerFactory, IIndexerStatusService indexerStatusService, ISlskdSearchChain slskdSearchChain, ISlskdItemsParser slskdItemsParser, IConfigService configService, IParsingService parsingService, ISentryHelper sentry, Logger logger)
           : base(httpClient, indexerStatusService, configService, parsingService, sentry, logger)
         {
-            _parseIndexerResponse = new SlskdIndexerParser(this, indexerFactory, httpClient);
+            _parseIndexerResponse = new SlskdIndexerParser(this, indexerFactory, httpClient, slskdItemsParser);
             _indexerRequestGenerator = new SlskdRequestGenerator(this, slskdSearchChain, httpClient, sentry);
         }
 

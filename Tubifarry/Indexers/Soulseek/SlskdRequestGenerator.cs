@@ -8,7 +8,6 @@ using NzbDrone.Core.Music;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Sentry;
 using Tubifarry.Core.Replacements;
 using Tubifarry.Core.Telemetry;
 using Tubifarry.Core.Utilities;
@@ -102,7 +101,7 @@ namespace Tubifarry.Indexers.Soulseek
             if (string.IsNullOrWhiteSpace(searchText))
                 return [];
 
-            var span = _sentry.StartSpan("slskd.search");
+            ISpan? span = _sentry.StartSpan("slskd.search");
             _sentry.SetSpanData(span, "search.query", searchText);
             _sentry.SetSpanData(span, "search.artist", query.Artist);
             _sentry.SetSpanData(span, "search.album", query.Album);
@@ -137,10 +136,12 @@ namespace Tubifarry.Indexers.Soulseek
                 _logger.Debug($"Search: {searchText}");
 
                 dynamic searchData = CreateSearchData(searchText);
-                dynamic searchId = searchData.Id;
+                string searchId = searchData.Id;
                 dynamic searchRequest = CreateSearchRequest(searchData);
 
                 await ExecuteSearchAsync(searchRequest, searchId);
+
+                _sentry.LogSearch(searchId, searchText, query.Artist, query.Album, "SlskdSearch", 0);
 
                 dynamic request = CreateResultRequest(searchId, query);
                 return new IndexerRequest(request);

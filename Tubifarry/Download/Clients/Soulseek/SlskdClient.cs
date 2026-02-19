@@ -25,6 +25,7 @@ namespace Tubifarry.Download.Clients.Soulseek
         private readonly IHttpClient _httpClient;
         private readonly IDownloadHistoryService _downloadService;
         private readonly ISentryHelper _sentry;
+        private readonly ISlskdItemsParser _slskdItemsParser;
 
         private static readonly Dictionary<DownloadKey<int, string>, SlskdDownloadItem> _downloadMappings = [];
         private static DateTime _lastCacheUpdateTime = DateTime.MinValue;
@@ -33,12 +34,13 @@ namespace Tubifarry.Download.Clients.Soulseek
         public override string Name => "Slskd";
         public override string Protocol => nameof(SoulseekDownloadProtocol);
 
-        public SlskdClient(IHttpClient httpClient, IDownloadHistoryService downloadService, IConfigService configService, IDiskProvider diskProvider, IRemotePathMappingService remotePathMappingService, ILocalizationService localizationService, ISentryHelper sentry, Logger logger)
+        public SlskdClient(IHttpClient httpClient, IDownloadHistoryService downloadService, ISlskdItemsParser slskdItemsParser, IConfigService configService, IDiskProvider diskProvider, IRemotePathMappingService remotePathMappingService, ILocalizationService localizationService, ISentryHelper sentry, Logger logger)
             : base(configService, diskProvider, remotePathMappingService, localizationService, logger)
         {
             _httpClient = httpClient;
             _downloadService = downloadService;
             _sentry = sentry;
+            _slskdItemsParser = slskdItemsParser;
         }
 
         public override async Task<string> Download(RemoteAlbum remoteAlbum, IIndexer indexer)
@@ -270,15 +272,15 @@ namespace Tubifarry.Download.Clients.Soulseek
             }
         }
 
-        private static ReleaseInfo CreateReleaseInfoFromDownloadDirectory(string username, SlskdDownloadDirectory dir)
+        private ReleaseInfo CreateReleaseInfoFromDownloadDirectory(string username, SlskdDownloadDirectory dir)
         {
-            SlskdFolderData folderData = dir.CreateFolderData(username);
+            SlskdFolderData folderData = dir.CreateFolderData(username, _slskdItemsParser);
 
             SlskdSearchData searchData = new(null, null, false, false, 1, null);
 
             IGrouping<string, SlskdFileData> directory = dir.ToSlskdFileDataList().GroupBy(_ => dir.Directory).First();
 
-            AlbumData albumData = SlskdItemsParser.CreateAlbumData(null!, directory, searchData, folderData, null, 0);
+            AlbumData albumData = _slskdItemsParser.CreateAlbumData(null!, directory, searchData, folderData, null, 0);
             ReleaseInfo release = albumData.ToReleaseInfo();
             release.DownloadProtocol = null;
             return release;
