@@ -221,7 +221,7 @@ namespace Tubifarry.Metadata.Lyrics
 
             try
             {
-                return ProcessTrackLyricsAsync(artist, trackFile).Result;
+                return ProcessTrackLyricsAsync(artist, trackFile).GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {

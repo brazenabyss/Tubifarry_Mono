@@ -56,8 +56,8 @@ namespace Tubifarry.Download.Clients.YouTube
         {
             try
             {
-                TrustedSessionHelper.ValidateAuthenticationSettingsAsync(Settings.TrustedSessionGeneratorUrl, Settings.CookiePath).Wait();
-                SessionTokens session = TrustedSessionHelper.GetTrustedSessionTokensAsync(Settings.TrustedSessionGeneratorUrl, true).Result;
+                TrustedSessionHelper.ValidateAuthenticationSettingsAsync(Settings.TrustedSessionGeneratorUrl, Settings.CookiePath).GetAwaiter().GetResult();
+                SessionTokens session = TrustedSessionHelper.GetTrustedSessionTokensAsync(Settings.TrustedSessionGeneratorUrl, true).GetAwaiter().GetResult();
                 if (!session.IsValid && !session.IsEmpty)
                     failures.Add(new ValidationFailure("TrustedSessionGeneratorUrl", "Failed to retrieve valid tokens from the session generator service"));
             }
@@ -68,7 +68,7 @@ namespace Tubifarry.Download.Clients.YouTube
 
             if (string.IsNullOrEmpty(Settings.DownloadPath))
                 failures.AddRange(PermissionTester.TestAllPermissions(Settings.FFmpegPath, _logger));
-            failures.AddIfNotNull(TestFFmpeg().Result);
+            failures.AddIfNotNull(TestFFmpeg().GetAwaiter().GetResult());
         }
 
         public async Task<ValidationFailure> TestFFmpeg()

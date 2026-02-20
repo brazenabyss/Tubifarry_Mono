@@ -35,7 +35,7 @@ namespace Tubifarry.Download.Clients.YouTube
             YoutubeClient provider)
         {
             _testTask ??= provider.TestFFmpeg();
-            _testTask.Wait();
+            _testTask.GetAwaiter().GetResult();
             await UpdateClientAsync(provider);
 
             YouTubeDownloadOptions options = new()

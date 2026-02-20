@@ -68,7 +68,7 @@ namespace Tubifarry.Download.Clients.Soulseek
                 _sentry.FinishSpan(span, ex);
                 try
                 {
-                    RemoveItemAsync(item).Wait();
+                    RemoveItemAsync(item).GetAwaiter().GetResult();
                 }
                 catch { }
                 throw;
@@ -122,7 +122,7 @@ namespace Tubifarry.Download.Clients.Soulseek
         {
             try
             {
-                UpdateDownloadItemsAsync().Wait();
+                UpdateDownloadItemsAsync().GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {
@@ -157,6 +157,8 @@ namespace Tubifarry.Download.Clients.Soulseek
             if (slskdItem == null) return;
 
             string? itemDirectory = slskdItem.SlskdDownloadDirectory?.Directory;
+
+            slskdItem.FileStateChanged -= FileStateChanged;
 
             _ = RemoveItemAsync(slskdItem);
             RemoveDownloadItem(clientItem.DownloadId);
@@ -329,7 +331,7 @@ namespace Tubifarry.Download.Clients.Soulseek
 
         private OsPath GetRemoteToLocal() => _remotePathMappingService.RemapRemoteToLocal(Settings.Host, new OsPath(Settings.DownloadPath));
 
-        protected override void Test(List<ValidationFailure> failures) => failures.AddIfNotNull(TestConnection().Result);
+        protected override void Test(List<ValidationFailure> failures) => failures.AddIfNotNull(TestConnection().GetAwaiter().GetResult());
 
         protected async Task<ValidationFailure> TestConnection()
         {

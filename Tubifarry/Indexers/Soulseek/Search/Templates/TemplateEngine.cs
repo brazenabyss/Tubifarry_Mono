@@ -1,7 +1,8 @@
+using NzbDrone.Core.IndexerSearch.Definitions;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.RegularExpressions;
-using NzbDrone.Core.IndexerSearch.Definitions;
 
 namespace Tubifarry.Indexers.Soulseek.Search.Templates;
 
@@ -10,6 +11,9 @@ public static partial class TemplateEngine
     private static readonly Regex PlaceholderRegex = CreatePlaceholderRegex();
     private static readonly Regex IndexerRegex = CreateIndexerRegex();
     private static readonly Type SearchCriteriaType = typeof(AlbumSearchCriteria);
+
+    private static readonly ConcurrentDictionary<(Type Type, string Name), PropertyInfo?> PropertyCache = new();
+    private static readonly ConcurrentDictionary<(Type Type, string Name), FieldInfo?> FieldCache = new();
 
     public static IReadOnlyList<string> ParseTemplates(string? templateConfig)
     {
@@ -26,12 +30,12 @@ public static partial class TemplateEngine
 
     public static IReadOnlyList<string> ValidateTemplates(string? templateConfig)
     {
-        var errors = new List<string>();
-        var templates = ParseTemplates(templateConfig);
+        List<string> errors = new List<string>();
+        IReadOnlyList<string> templates = ParseTemplates(templateConfig);
 
         for (int i = 0; i < templates.Count; i++)
         {
-            var matches = PlaceholderRegex.Matches(templates[i]);
+            MatchCollection matches = PlaceholderRegex.Matches(templates[i]);
             if (matches.Count == 0)
             {
                 errors.Add($"Line {i + 1}: No placeholders found (use {{{{Property}}}})");
@@ -64,7 +68,7 @@ public static partial class TemplateEngine
             Match idx = IndexerRegex.Match(segment);
             string propName = idx.Success ? idx.Groups[1].Value : segment;
 
-            var prop = currentType.GetProperty(propName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+            PropertyInfo? prop = GetCachedProperty(currentType, propName);
             if (prop == null)
                 return $"unknown property '{propName}'";
 
@@ -73,7 +77,7 @@ public static partial class TemplateEngine
             // Unwrap Lazy<T>, List<T>, etc.
             if (currentType.IsGenericType)
             {
-                var genDef = currentType.GetGenericTypeDefinition();
+                Type genDef = currentType.GetGenericTypeDefinition();
                 if (genDef == typeof(Lazy<>) || genDef == typeof(List<>) || genDef == typeof(IList<>) || genDef == typeof(IEnumerable<>))
                     currentType = currentType.GetGenericArguments()[0];
             }
@@ -139,13 +143,13 @@ public static partial class TemplateEngine
 
     private static object? GetValue(object obj, string name)
     {
-        var type = obj.GetType();
-        var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-        var value = prop?.GetValue(obj) ?? type.GetField(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase)?.GetValue(obj);
+        Type type = obj.GetType();
+        PropertyInfo? prop = GetCachedProperty(type, name);
+        object? value = prop?.GetValue(obj) ?? GetCachedField(type, name)?.GetValue(obj);
 
         // Unwrap Lazy<T>
         if (value?.GetType() is { IsGenericType: true } t && t.GetGenericTypeDefinition() == typeof(Lazy<>))
-            value = t.GetProperty("Value")?.GetValue(value);
+            value = GetCachedProperty(t, "Value")?.GetValue(value);
 
         return value;
     }
@@ -157,6 +161,20 @@ public static partial class TemplateEngine
         IEnumerable e => e.Cast<object>().ElementAtOrDefault(idx),
         _ => null
     };
+
+    private static PropertyInfo? GetCachedProperty(Type type, string name)
+        => PropertyCache.GetOrAdd((type, name), key =>
+            key.Type.GetProperty(key.Name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase));
+
+    private static FieldInfo? GetCachedField(Type type, string name)
+        => FieldCache.GetOrAdd((type, name), key =>
+            key.Type.GetField(key.Name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase));
+
+    public static void ClearCaches()
+    {
+        PropertyCache.Clear();
+        FieldCache.Clear();
+    }
 
     [GeneratedRegex(@"\{\{([^}]+)\}\}", RegexOptions.Compiled)]
     private static partial Regex CreatePlaceholderRegex();

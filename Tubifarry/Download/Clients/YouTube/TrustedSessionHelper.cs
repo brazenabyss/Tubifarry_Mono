@@ -25,10 +25,24 @@ namespace Tubifarry.Download.Clients.YouTube
         private static SessionTokens? _cachedTokens;
         private static string? _cachedVisitorData;
         private static DateTime _visitorDataExpiry = DateTime.MinValue;
-        private static bool? _nodeJsAvailable;
-        private static readonly object _nodeJsCheckLock = new();
         private static readonly SemaphoreSlim _semaphore = new(1, 1);
         private static readonly SemaphoreSlim _visitorDataSemaphore = new(1, 1);
+
+        private static readonly Lazy<bool> NodeJsAvailable = new(() =>
+        {
+            try
+            {
+                _logger.Trace("Checking Node.js availability...");
+                using NodeEnvironment? testEnv = new();
+                _logger.Debug("Node.js environment is available for local token generation");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.Trace(ex, "Node.js environment is not available for local token generation: {Message}", ex.Message);
+                return false;
+            }
+        }, LazyThreadSafetyMode.ExecutionAndPublication);
 
         /// <summary>
         /// Gets trusted session tokens (session-level), using cache if available and valid
@@ -420,33 +434,7 @@ namespace Tubifarry.Download.Clients.YouTube
         /// <summary>
         /// Checks if Node.js is available for local token generation
         /// </summary>
-        private static bool IsNodeJsAvailable()
-        {
-            lock (_nodeJsCheckLock)
-            {
-                if (_nodeJsAvailable.HasValue)
-                    return _nodeJsAvailable.Value;
-                NodeEnvironment? testEnv = null;
-                try
-                {
-                    _logger.Trace("Checking Node.js availability...");
-                    testEnv = new();
-                    _nodeJsAvailable = true;
-                    _logger.Debug("Node.js environment is available for local token generation");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    _nodeJsAvailable = false;
-                    _logger.Trace(ex, "Node.js environment is not available for local token generation: {Message}", ex.Message);
-                    return false;
-                }
-                finally
-                {
-                    testEnv?.Dispose();
-                }
-            }
-        }
+        private static bool IsNodeJsAvailable() => NodeJsAvailable.Value;
 
         public static void ClearCache()
         {

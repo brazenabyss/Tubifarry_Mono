@@ -43,8 +43,8 @@ namespace Tubifarry.Indexers.Spotify
 
             try
             {
-                _sessionTokens = TrustedSessionHelper.GetTrustedSessionTokensAsync(settings.TrustedSessionGeneratorUrl).Result;
-                _ytClient = TrustedSessionHelper.CreateAuthenticatedClientAsync(settings.TrustedSessionGeneratorUrl, settings.CookiePath).Result;
+                _sessionTokens = TrustedSessionHelper.GetTrustedSessionTokensAsync(settings.TrustedSessionGeneratorUrl).GetAwaiter().GetResult();
+                _ytClient = TrustedSessionHelper.CreateAuthenticatedClientAsync(settings.TrustedSessionGeneratorUrl, settings.CookiePath).GetAwaiter().GetResult();
                 _logger.Debug("Successfully created authenticated YouTube Music client for enrichment");
             }
             catch (Exception ex)
@@ -74,7 +74,7 @@ namespace Tubifarry.Indexers.Spotify
                     foreach (Task<AlbumData> task in enrichmentTasks)
                     {
                         if (task.IsCompletedSuccessfully)
-                            enrichedAlbums.Add(task.Result);
+                            enrichedAlbums.Add(task.GetAwaiter().GetResult());
                         else if (task.IsFaulted)
                             _logger.Warn(task.Exception, "Enrichment task failed");
                     }

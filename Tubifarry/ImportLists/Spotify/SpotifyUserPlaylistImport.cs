@@ -21,6 +21,9 @@ namespace NzbDrone.Core.ImportLists.Spotify
         private const int MaxRateLimitDelayMilliseconds = 30000;
         private FileCache? _fileCache;
 
+        private static readonly SemaphoreSlim _throttleSemaphore = new(1, 1);
+        private static DateTime _lastRequestTime = DateTime.MinValue;
+
         public SpotifyUserPlaylistImport(
             ISpotifyProxy spotifyProxy,
             IMetadataRequestBuilder requestBuilder,
@@ -112,7 +115,7 @@ namespace NzbDrone.Core.ImportLists.Spotify
                         continue;
                     }
 
-                    CachedPlaylistData? cachedData = _fileCache.GetAsync<CachedPlaylistData>(cacheKey).Result;
+                    CachedPlaylistData? cachedData = _fileCache.GetAsync<CachedPlaylistData>(cacheKey).GetAwaiter().GetResult();
                     if (cachedData != null)
                     {
                         result.AddRange(cachedData.ImportListItems);
@@ -146,7 +149,7 @@ namespace NzbDrone.Core.ImportLists.Spotify
                 Playlist = playlist
             };
 
-            _fileCache!.SetAsync(cacheKey, cachedDataToSave, TimeSpan.FromDays(Settings.CacheRetentionDays)).Wait();
+            _fileCache!.SetAsync(cacheKey, cachedDataToSave, TimeSpan.FromDays(Settings.CacheRetentionDays)).GetAwaiter().GetResult();
             result.AddRange(playlistItems);
         }
 
@@ -197,7 +200,7 @@ namespace NzbDrone.Core.ImportLists.Spotify
 
                 int delay = CalculateRateLimitDelay(retryCount);
                 _logger.Warn($"Rate limit exceeded. Retrying in {delay} milliseconds.");
-                Task.Delay(delay).Wait();
+                Task.Delay(delay).GetAwaiter().GetResult();
                 return GetUserPlaylistsWithRetry(api, userId, retryCount + 1);
             }
         }
@@ -219,7 +222,7 @@ namespace NzbDrone.Core.ImportLists.Spotify
 
                 int delay = CalculateRateLimitDelay(retryCount);
                 _logger.Trace($"Rate limit exceeded. Retrying in {delay} milliseconds.");
-                Task.Delay(delay).Wait();
+                Task.Delay(delay).GetAwaiter().GetResult();
                 return GetPlaylistTracksWithRetry(api, playlistId, retryCount + 1);
             }
         }
@@ -241,12 +244,29 @@ namespace NzbDrone.Core.ImportLists.Spotify
 
                 int delay = CalculateRateLimitDelay(retryCount);
                 _logger.Trace($"Rate limit exceeded. Retrying in {delay} milliseconds.");
-                Task.Delay(delay).Wait();
+                Task.Delay(delay).GetAwaiter().GetResult();
                 return GetNextPageWithRetry(api, paging, retryCount + 1);
             }
         }
 
-        private static void Throttle() => Task.Delay(BaseThrottleMilliseconds).Wait();
+        private static void Throttle()
+        {
+            _throttleSemaphore.Wait();
+            try
+            {
+                TimeSpan timeSinceLastRequest = DateTime.Now - _lastRequestTime;
+                if (timeSinceLastRequest.TotalMilliseconds < BaseThrottleMilliseconds)
+                {
+                    int delayNeeded = BaseThrottleMilliseconds - (int)timeSinceLastRequest.TotalMilliseconds;
+                    Task.Delay(delayNeeded).GetAwaiter().GetResult();
+                }
+                _lastRequestTime = DateTime.Now;
+            }
+            finally
+            {
+                _throttleSemaphore.Release();
+            }
+        }
 
         private static int CalculateRateLimitDelay(int retryCount)
         {

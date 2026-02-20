@@ -99,11 +99,11 @@ namespace Tubifarry.Core.Model
         }
 
         /// <summary>
-        /// Computes the file path for a given cache key using an MD5 hash and sharding.
+        /// Computes the file path for a given cache key using a SHA256 hash and sharding.
         /// </summary>
         private string GetCacheFilePath(string cacheKey)
         {
-            byte[] hashBytes = MD5.HashData(Encoding.UTF8.GetBytes(cacheKey));
+            byte[] hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(cacheKey));
             string hashString = BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
 
             string subdirectory = hashString[..2];

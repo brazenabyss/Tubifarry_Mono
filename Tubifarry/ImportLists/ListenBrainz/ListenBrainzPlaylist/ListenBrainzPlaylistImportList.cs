@@ -109,7 +109,7 @@ namespace Tubifarry.ImportLists.ListenBrainz.ListenBrainzPlaylist
             object thisOperationToken = new();
             _currentOperation = thisOperationToken;
 
-            Task.Delay(2000).Wait();
+            Task.Delay(2000).GetAwaiter().GetResult();
 
             if (thisOperationToken != _currentOperation)
                 return null!;

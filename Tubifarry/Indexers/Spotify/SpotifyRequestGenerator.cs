@@ -154,7 +154,7 @@ namespace Tubifarry.Indexers.Spotify
             if (RequestNewToken())
                 StartTokenRequest();
             if (TokenIsExpired())
-                _tokenRequest?.Wait();
+                _tokenRequest?.Task.GetAwaiter().GetResult();
         }
 
         public bool TokenIsExpired() => DateTime.Now >= _tokenExpiry;

@@ -111,7 +111,7 @@ namespace Tubifarry.Indexers.YouTube
                 {
                     AlbumData albumData = ExtractAlbumInfo(album);
                     albumData.ParseReleaseDate();
-                    EnrichAlbumWithYouTubeDataAsync(albumData).Wait();
+                    EnrichAlbumWithYouTubeDataAsync(albumData).GetAwaiter().GetResult();
                     if (albumData.Bitrate > 0)
                     {
                         releases.Add(albumData.ToReleaseInfo());
@@ -187,8 +187,8 @@ namespace Tubifarry.Indexers.YouTube
         {
             if (_sessionToken?.IsValid == true)
                 return;
-            _sessionToken = TrustedSessionHelper.GetTrustedSessionTokensAsync(_youTubeIndexer.Settings.TrustedSessionGeneratorUrl).Result;
-            _youTubeClient = TrustedSessionHelper.CreateAuthenticatedClientAsync(_youTubeIndexer.Settings.TrustedSessionGeneratorUrl, _youTubeIndexer.Settings.CookiePath).Result;
+            _sessionToken = TrustedSessionHelper.GetTrustedSessionTokensAsync(_youTubeIndexer.Settings.TrustedSessionGeneratorUrl).GetAwaiter().GetResult();
+            _youTubeClient = TrustedSessionHelper.CreateAuthenticatedClientAsync(_youTubeIndexer.Settings.TrustedSessionGeneratorUrl, _youTubeIndexer.Settings.CookiePath).GetAwaiter().GetResult();
         }
 
         private static AlbumData ExtractAlbumInfo(AlbumSearchResult album) => new("Youtube", nameof(YoutubeDownloadProtocol))

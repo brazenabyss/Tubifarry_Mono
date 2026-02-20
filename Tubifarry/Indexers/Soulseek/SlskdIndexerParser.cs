@@ -136,7 +136,7 @@ namespace Tubifarry.Indexers.Soulseek
             _logger.Trace($"Expanding directory for: {folderData.Username}:{directoryGroup.Key}");
 
             SlskdRequestGenerator? requestGenerator = _indexer.GetExtendedRequestGenerator() as SlskdRequestGenerator;
-            IGrouping<string, SlskdFileData>? expandedGroup = requestGenerator?.ExpandDirectory(folderData.Username, directoryGroup.Key, originalTrack).Result;
+            IGrouping<string, SlskdFileData>? expandedGroup = requestGenerator?.ExpandDirectory(folderData.Username, directoryGroup.Key, originalTrack).GetAwaiter().GetResult();
 
             if (expandedGroup != null)
             {
@@ -177,7 +177,7 @@ namespace Tubifarry.Indexers.Soulseek
         {
             if (!_interactiveResults.TryGetValue(message.Album.Release.IndexerId, out string? selectedId) || !message.Album.Release.InfoUrl.EndsWith(selectedId))
                 return;
-            ExecuteRemovalAsync((SlskdSettings)_indexerFactory.Value.Get(message.Album.Release.IndexerId).Settings, selectedId).Wait();
+            ExecuteRemovalAsync((SlskdSettings)_indexerFactory.Value.Get(message.Album.Release.IndexerId).Settings, selectedId).GetAwaiter().GetResult();
             _interactiveResults.Remove(message.Album.Release.IndexerId);
         }
 
@@ -187,7 +187,7 @@ namespace Tubifarry.Indexers.Soulseek
             {
                 if (_interactiveResults.TryGetValue(indexerId, out string? selectedId))
                 {
-                    ExecuteRemovalAsync((SlskdSettings)_indexerFactory.Value.Get(indexerId).Settings, selectedId).Wait();
+                    ExecuteRemovalAsync((SlskdSettings)_indexerFactory.Value.Get(indexerId).Settings, selectedId).GetAwaiter().GetResult();
                     _interactiveResults.Remove(indexerId);
                 }
             }

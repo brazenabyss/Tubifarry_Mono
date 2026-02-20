@@ -2,6 +2,7 @@ using FuzzySharp;
 using Newtonsoft.Json;
 using NLog;
 using NzbDrone.Core.Indexers;
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Tubifarry.Core.Model;
 using Tubifarry.Core.Telemetry;
@@ -13,6 +14,16 @@ namespace Tubifarry.Indexers.Soulseek
     {
         private readonly Logger _logger;
         private readonly ISentryHelper _sentry;
+
+        // Fuzzy matching threshold constants
+        private const int FuzzyArtistPartialThreshold = 90;
+        private const int FuzzyArtistTokenSortThreshold = 85;
+        private const int FuzzyAlbumPartialThreshold = 85;
+        private const int FuzzyAlbumTokenSortThreshold = 80;
+        private const int FuzzyCombinedThreshold = 85;
+
+        private static readonly ConcurrentDictionary<(string, string), (int Partial, int TokenSort)> FuzzyCache = new();
+        private const int MaxCacheSize = 10000;
 
         private static readonly Dictionary<string, string> _textNumbers = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -75,21 +86,20 @@ namespace Tubifarry.Indexers.Soulseek
 
             _logger.Trace($"Creating album data - Dir: '{dirNameNorm}', Search artist: '{searchArtistNorm}', Search album: '{searchAlbumNorm}'");
 
-            // Calculate fuzzy scores for tracking
-            int fuzzyArtistPartial = !string.IsNullOrEmpty(searchArtistNorm) ? Fuzz.PartialRatio(dirNameNorm, searchArtistNorm) : 0;
-            int fuzzyArtistTokenSort = !string.IsNullOrEmpty(searchArtistNorm) ? Fuzz.TokenSortRatio(dirNameNorm, searchArtistNorm) : 0;
-            int fuzzyAlbumPartial = !string.IsNullOrEmpty(searchAlbumNorm) ? Fuzz.PartialRatio(dirNameNorm, searchAlbumNorm) : 0;
-            int fuzzyAlbumTokenSort = !string.IsNullOrEmpty(searchAlbumNorm) ? Fuzz.TokenSortRatio(dirNameNorm, searchAlbumNorm) : 0;
+            // Calculate fuzzy scores with caching for performance
+            (int fuzzyArtistPartial, int fuzzyArtistTokenSort) = GetCachedFuzzyScores(dirNameNorm, searchArtistNorm);
+            (int fuzzyAlbumPartial, int fuzzyAlbumTokenSort) = GetCachedFuzzyScores(dirNameNorm, searchAlbumNorm);
 
             bool isVolumeSearch = !string.IsNullOrEmpty(searchData.Album) && VolumeRegex().Match(searchData.Album).Success;
 
-            bool isAlbumMatch = isVolumeSearch ? CheckVolumeSeriesMatch(directory.Key, searchData.Album) : !string.IsNullOrEmpty(searchAlbumNorm) && (fuzzyAlbumPartial > 85 || fuzzyAlbumTokenSort > 80);
+            bool isAlbumMatch = isVolumeSearch ? CheckVolumeSeriesMatch(directory.Key, searchData.Album) : !string.IsNullOrEmpty(searchAlbumNorm) && (fuzzyAlbumPartial > FuzzyAlbumPartialThreshold || fuzzyAlbumTokenSort > FuzzyAlbumTokenSortThreshold);
             bool isArtistMatch = IsFuzzyArtistMatch(dirNameNorm, searchArtistNorm);
 
             if (!isArtistMatch && !isAlbumMatch && !string.IsNullOrEmpty(searchData.Artist) && !string.IsNullOrEmpty(searchData.Album))
             {
                 string combinedSearch = NormalizeString($"{searchData.Artist} {searchData.Album}");
-                isAlbumMatch = Fuzz.PartialRatio(dirNameNorm, combinedSearch) > 85;
+                (int combinedPartial, _) = GetCachedFuzzyScores(dirNameNorm, combinedSearch);
+                isAlbumMatch = combinedPartial > FuzzyCombinedThreshold;
             }
 
             _logger.Debug($"Match results - Artist: {isArtistMatch}, Album: {isAlbumMatch}");
@@ -237,7 +247,7 @@ namespace Tubifarry.Indexers.Soulseek
 
             bool baseAlbumMatch = Fuzz.PartialRatio(
                 NormalizeString(dirBaseAlbum),
-                NormalizeString(searchBaseAlbum)) > 85;
+                NormalizeString(searchBaseAlbum)) > FuzzyAlbumPartialThreshold;
 
             return baseAlbumMatch && normSearchVol.Equals(normDirVol, StringComparison.OrdinalIgnoreCase);
         }
@@ -358,13 +368,51 @@ namespace Tubifarry.Indexers.Soulseek
             return match.Success ? match : null;
         }
 
-        private static bool IsFuzzyArtistMatch(string dirNameNorm, string searchArtistNorm) =>
-            !string.IsNullOrEmpty(searchArtistNorm) &&
-            (Fuzz.PartialRatio(dirNameNorm, searchArtistNorm) > 90 || Fuzz.TokenSortRatio(dirNameNorm, searchArtistNorm) > 85);
+        private static bool IsFuzzyArtistMatch(string dirNameNorm, string searchArtistNorm)
+        {
+            if (string.IsNullOrEmpty(searchArtistNorm))
+                return false;
+            (int partial, int tokenSort) = GetCachedFuzzyScores(dirNameNorm, searchArtistNorm);
+            return partial > FuzzyArtistPartialThreshold || tokenSort > FuzzyArtistTokenSortThreshold;
+        }
 
-        private static bool IsFuzzyAlbumMatch(string dirNameNorm, string searchAlbumNorm, bool volumeMatch) =>
-            !string.IsNullOrEmpty(searchAlbumNorm) &&
-            (volumeMatch || Fuzz.PartialRatio(dirNameNorm, searchAlbumNorm) > 85 || Fuzz.TokenSortRatio(dirNameNorm, searchAlbumNorm) > 80);
+        private static bool IsFuzzyAlbumMatch(string dirNameNorm, string searchAlbumNorm, bool volumeMatch)
+        {
+            if (string.IsNullOrEmpty(searchAlbumNorm))
+                return false;
+            if (volumeMatch)
+                return true;
+            (int partial, int tokenSort) = GetCachedFuzzyScores(dirNameNorm, searchAlbumNorm);
+            return partial > FuzzyAlbumPartialThreshold || tokenSort > FuzzyAlbumTokenSortThreshold;
+        }
+
+        /// <summary>
+        /// Gets fuzzy matching scores with caching to avoid redundant calculations.
+        /// </summary>
+        private static (int Partial, int TokenSort) GetCachedFuzzyScores(string str1, string str2)
+        {
+            if (string.IsNullOrEmpty(str1) || string.IsNullOrEmpty(str2))
+                return (0, 0);
+
+            // Create a consistent cache key (alphabetically ordered to ensure cache hits)
+            (string, string) cacheKey = string.Compare(str1, str2, StringComparison.Ordinal) < 0
+                ? (str1, str2)
+                : (str2, str1);
+
+            return FuzzyCache.GetOrAdd(cacheKey, key =>
+            {
+                // Clear cache if it gets too large to prevent memory issues
+                if (FuzzyCache.Count > MaxCacheSize)
+                {
+                    FuzzyCache.Clear();
+                }
+
+                return (
+                    Fuzz.PartialRatio(key.Item1, key.Item2),
+                    Fuzz.TokenSortRatio(key.Item1, key.Item2)
+                );
+            });
+        }
 
         public static string DetermineRegexMatchType(string folderPath)
         {

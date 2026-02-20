@@ -31,8 +31,8 @@ namespace Tubifarry.Metadata.Converter
 
         public override MetadataFileResult TrackMetadata(Artist artist, TrackFile trackFile)
         {
-            if (ShouldConvertTrack(trackFile).Result)
-                ConvertTrack(trackFile).Wait();
+            if (ShouldConvertTrack(trackFile).GetAwaiter().GetResult())
+                ConvertTrack(trackFile).GetAwaiter().GetResult();
             else
                 _logger.Trace($"No rule matched for {trackFile.OriginalFilePath}");
             return null!;

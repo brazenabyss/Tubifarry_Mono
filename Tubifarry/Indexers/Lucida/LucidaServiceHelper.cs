@@ -61,7 +61,7 @@ namespace Tubifarry.Indexers.Lucida
             string key = baseUrl.TrimEnd('/');
             if (_cache.TryGetValue(key, out Task<Dictionary<string, List<ServiceCountry>>>? task) && task.Status == TaskStatus.RanToCompletion)
             {
-                return task.Result.Count != 0;
+                return task.GetAwaiter().GetResult().Count != 0;
             }
             return false;
         }
@@ -73,7 +73,7 @@ namespace Tubifarry.Indexers.Lucida
         {
             string key = baseUrl.TrimEnd('/');
             if (_cache.TryGetValue(key, out Task<Dictionary<string, List<ServiceCountry>>>? task) && task.Status == TaskStatus.RanToCompletion)
-                return task.Result;
+                return task.GetAwaiter().GetResult();
             return new Dictionary<string, List<ServiceCountry>>(StringComparer.OrdinalIgnoreCase);
         }
 

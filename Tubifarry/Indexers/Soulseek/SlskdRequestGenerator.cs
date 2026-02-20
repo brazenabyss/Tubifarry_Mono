@@ -43,9 +43,9 @@ namespace Tubifarry.Indexers.Soulseek
             _logger.Trace($"Setting up lazy search for album: {searchCriteria.AlbumQuery} by artist: {searchCriteria.ArtistQuery}");
 
             Album? album = searchCriteria.Albums.FirstOrDefault();
-            List<AlbumRelease>? albumReleases = album?.AlbumReleases.Value;
+            List<AlbumRelease>? albumReleases = album?.AlbumReleases?.Value;
             int trackCount = albumReleases?.Any() == true ? albumReleases.Min(x => x.TrackCount) : 0;
-            List<string> tracks = albumReleases?.FirstOrDefault(x => x.Tracks.Value is { Count: > 0 })?.Tracks.Value?
+            List<string> tracks = albumReleases?.FirstOrDefault(x => x.Tracks?.Value is { Count: > 0 })?.Tracks?.Value?
                 .Where(x => !string.IsNullOrEmpty(x.Title)).Select(x => x.Title).ToList() ?? [];
 
             _processedSearches.Clear();
@@ -71,9 +71,9 @@ namespace Tubifarry.Indexers.Soulseek
             _logger.Debug($"Setting up lazy search for artist: {searchCriteria.CleanArtistQuery}");
 
             Album? album = searchCriteria.Albums.FirstOrDefault();
-            List<AlbumRelease>? albumReleases = album?.AlbumReleases.Value;
+            List<AlbumRelease>? albumReleases = album?.AlbumReleases?.Value;
             int trackCount = albumReleases?.Any() == true ? albumReleases.Min(x => x.TrackCount) : 0;
-            List<string> tracks = albumReleases?.FirstOrDefault(x => x.Tracks.Value is { Count: > 0 })?.Tracks.Value?
+            List<string> tracks = albumReleases?.FirstOrDefault(x => x.Tracks?.Value is { Count: > 0 })?.Tracks?.Value?
                 .Where(x => !string.IsNullOrEmpty(x.Title)).Select(x => x.Title).ToList() ?? [];
 
             _processedSearches.Clear();

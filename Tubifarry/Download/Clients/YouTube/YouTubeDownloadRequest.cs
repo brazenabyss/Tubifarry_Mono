@@ -23,7 +23,7 @@ namespace Tubifarry.Download.Clients.YouTube
     {
         public YouTubeDownloadRequest(RemoteAlbum remoteAlbum, YouTubeDownloadOptions? options) : base(remoteAlbum, options)
         {
-            Options.YouTubeMusicClient ??= TrustedSessionHelper.CreateAuthenticatedClientAsync().Result;
+            Options.YouTubeMusicClient ??= TrustedSessionHelper.CreateAuthenticatedClientAsync().GetAwaiter().GetResult();
 
             _requestContainer.Add(new OwnRequest(async (token) =>
             {
