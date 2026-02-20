@@ -249,6 +249,10 @@ namespace Tubifarry.Download.Base
 
                 return await response.Content.ReadAsStringAsync(cts.Token);
             }
+            catch (ObjectDisposedException)
+            {
+                throw new Exception($"HTTP GET request failed, connection was closed for URL '{url}'");
+            }
             catch (Exception ex)
             {
                 throw new Exception($"HTTP GET request failed for URL '{url}': {ex.Message}", ex);

@@ -1,22 +1,16 @@
 using NLog;
 using NzbDrone.Common.Instrumentation;
+using System.Text;
 using System.Text.RegularExpressions;
 using Tubifarry.Download.Base;
 using Tubifarry.Indexers.Lucida;
 
 namespace Tubifarry.Download.Clients.Lucida
 {
-    /// <summary>
-    /// Extracts authentication tokens from Lucida web pages
-    /// Simple, focused implementation that gets the job done
-    /// </summary>
     public static partial class LucidaTokenExtractor
     {
         private static readonly Logger _logger = NzbDroneLogger.GetLogger(typeof(LucidaTokenExtractor));
 
-        /// <summary>
-        /// Extracts tokens from a Lucida web page
-        /// </summary>
         public static async Task<LucidaTokens> ExtractTokensAsync(BaseHttpClient httpClient, string url)
         {
             try
@@ -32,9 +26,6 @@ namespace Tubifarry.Download.Clients.Lucida
             }
         }
 
-        /// <summary>
-        /// Extracts tokens from HTML content
-        /// </summary>
         public static LucidaTokens ExtractTokensFromHtml(string html)
         {
             if (string.IsNullOrEmpty(html))
@@ -42,15 +33,29 @@ namespace Tubifarry.Download.Clients.Lucida
 
             try
             {
-                string token = ExtractToken(html);
-                long expiry = ExtractTokenExpiry(html);
-
-                if (string.IsNullOrEmpty(token))
+                Match match = TrackTokenRegex().Match(html);
+                if (!match.Success)
                 {
-                    _logger.Debug("No token found in HTML content");
+                    _logger.Debug("No track token pattern found");
                     return LucidaTokens.Empty;
                 }
-                return new LucidaTokens(token, token, expiry);
+
+                string encodedToken = match.Groups[1].Value;
+                long expiry = long.TryParse(match.Groups[2].Value, out long e)
+                    ? e
+                    : DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeSeconds();
+
+                if (encodedToken == "album")
+                {
+                    _logger.Debug("Album page detected, tokens are per-track csrf values in metadata");
+                    return LucidaTokens.Empty;
+                }
+
+                string decoded = DoubleBase64Decode(encodedToken);
+                if (string.IsNullOrEmpty(decoded))
+                    return LucidaTokens.Empty;
+
+                return new LucidaTokens(decoded, decoded, expiry);
             }
             catch (Exception ex)
             {
@@ -59,30 +64,42 @@ namespace Tubifarry.Download.Clients.Lucida
             }
         }
 
-        /// <summary>
-        /// Extracts the token using regex
-        /// </summary>
-        private static string ExtractToken(string html)
+        private static string DoubleBase64Decode(string encoded)
         {
-            Match match = TokenRegex().Match(html);
-            return match.Success ? match.Groups[1].Value : string.Empty;
+            if (string.IsNullOrEmpty(encoded))
+                return string.Empty;
+
+            try
+            {
+                string normalized = NormalizeBase64(encoded);
+                byte[] firstBytes = Convert.FromBase64String(normalized);
+                string firstDecode = Encoding.UTF8.GetString(firstBytes);
+
+                string firstNormalized = NormalizeBase64(firstDecode);
+                byte[] secondBytes = Convert.FromBase64String(firstNormalized);
+                return Encoding.UTF8.GetString(secondBytes);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Failed to double-decode token");
+                return string.Empty;
+            }
         }
 
-        /// <summary>
-        /// Extracts token expiry timestamp
-        /// </summary>
-        private static long ExtractTokenExpiry(string html)
+        private static string NormalizeBase64(string input)
         {
-            Match match = TokenExpiryRegex().Match(html);
-            if (match.Success && long.TryParse(match.Groups[1].Value, out long expiry))
-                return expiry;
-            return DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeSeconds();
+            if (string.IsNullOrEmpty(input))
+                return input;
+
+            string normalized = input.Replace('-', '+').Replace('_', '/');
+            int paddingNeeded = (4 - normalized.Length % 4) % 4;
+            if (paddingNeeded > 0)
+                normalized += new string('=', paddingNeeded);
+
+            return normalized;
         }
 
-        [GeneratedRegex(@"""token""\s*:\s*""([^""]+)""", RegexOptions.Compiled)]
-        private static partial Regex TokenRegex();
-
-        [GeneratedRegex(@"""tokenExpiry""\s*:\s*(\d+)", RegexOptions.Compiled)]
-        private static partial Regex TokenExpiryRegex();
+        [GeneratedRegex(@"\b""?token""?\s*:\s*""([A-Za-z0-9+/=_-]{16,})""\s*,\s*\btokenExpiry\s*:\s*(\d+)", RegexOptions.Compiled)]
+        private static partial Regex TrackTokenRegex();
     }
 }

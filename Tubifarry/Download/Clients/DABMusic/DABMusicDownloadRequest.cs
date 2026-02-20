@@ -1,4 +1,4 @@
-﻿using DownloadAssistant.Options;
+using DownloadAssistant.Options;
 using DownloadAssistant.Requests;
 using NLog;
 using NzbDrone.Core.Datastore;
@@ -223,7 +223,7 @@ namespace Tubifarry.Download.Clients.DABMusic
 
             try
             {
-                HttpResponseMessage response = await _httpClient.GetAsync(coverUrl, token);
+                using HttpResponseMessage response = await _httpClient.GetAsync(coverUrl, token);
                 response.EnsureSuccessStatusCode();
 
                 _albumCover = await response.Content.ReadAsByteArrayAsync(token);

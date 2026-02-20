@@ -66,27 +66,26 @@ namespace Tubifarry.Indexers.Lucida
 
             foreach ((string service, int _) in prioritized)
             {
-                if (!services.TryGetValue(service, out List<ServiceCountry>? countries) || countries.Count == 0) continue;
-
-                IEnumerable<ServiceCountry> picks = countries
-                    .Where(c => userCountries.Contains(c.Code))
-                    .DefaultIfEmpty(countries[0])
-                    .Take(2);
-
-                foreach (ServiceCountry? country in picks)
+                if (!services.TryGetValue(service, out List<ServiceCountry>? countries) || countries.Count == 0)
                 {
-                    string url = $"{baseUrl}/search?query={Uri.EscapeDataString(query)}&service={service}&country={country.Code}";
-                    _logger.Trace("Adding tier: {Url}", url);
-
-                    HttpRequest req = new(url)
-                    {
-                        RequestTimeout = TimeSpan.FromSeconds(_settings.RequestTimeout),
-                        ContentSummary = new LucidaRequestData(service, _settings.BaseUrl, country.Code, isSingle).ToJson()
-                    };
-                    req.Headers["User-Agent"] = Tubifarry.UserAgent;
-
-                    chain.AddTier([new IndexerRequest(req)]);
+                    _logger.Trace("Skipping service {Service}, no countries available", service);
+                    continue;
                 }
+
+                ServiceCountry? preferredCountry = countries.FirstOrDefault(c => userCountries.Contains(c.Code));
+                string countryCode = preferredCountry?.Code ?? countries[0].Code;
+
+                string url = $"{baseUrl}/search?query={Uri.EscapeDataString(query)}&service={service}&country={countryCode}";
+                _logger.Trace("Adding tier: {Url}", url);
+
+                HttpRequest req = new(url)
+                {
+                    RequestTimeout = TimeSpan.FromSeconds(_settings.RequestTimeout),
+                    ContentSummary = new LucidaRequestData(service, _settings.BaseUrl, countryCode, isSingle).ToJson()
+                };
+                req.Headers["User-Agent"] = Tubifarry.UserAgent;
+
+                chain.AddTier([new IndexerRequest(req)]);
             }
 
             return chain;

@@ -195,7 +195,7 @@ namespace Tubifarry.Download.Clients.TripleTriple
 
             try
             {
-                HttpResponseMessage response = await _httpClient.GetAsync(coverUrl, token);
+                using HttpResponseMessage response = await _httpClient.GetAsync(coverUrl, token);
                 response.EnsureSuccessStatusCode();
 
                 _albumCover = await response.Content.ReadAsByteArrayAsync(token);
