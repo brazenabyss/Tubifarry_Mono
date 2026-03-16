@@ -27,7 +27,7 @@ namespace Tubifarry.ImportLists.ListenBrainz.ListenBrainzPlaylist
             return pageableRequests;
         }
 
-        private ImportListRequest CreatePlaylistRequest(string playlistId)
+        public ImportListRequest CreatePlaylistRequest(string playlistId)
         {
             HttpRequestBuilder requestBuilder = new HttpRequestBuilder(_settings.BaseUrl)
                 .Accept(HttpAccept.Json);

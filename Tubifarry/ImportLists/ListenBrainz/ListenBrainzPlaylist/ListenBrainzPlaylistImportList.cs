@@ -9,10 +9,11 @@ using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using System.Net;
 using System.Text.Json;
+using Tubifarry.Core.Model;
 
 namespace Tubifarry.ImportLists.ListenBrainz.ListenBrainzPlaylist
 {
-    public class ListenBrainzPlaylistImportList : HttpImportListBase<ListenBrainzPlaylistSettings>
+    public class ListenBrainzPlaylistImportList : HttpImportListBase<ListenBrainzPlaylistSettings>, IPlaylistTrackSource
     {
         private static object _currentOperation = new();
 
@@ -164,5 +165,35 @@ namespace Tubifarry.ImportLists.ListenBrainz.ListenBrainzPlaylist
         {
             PropertyNameCaseInsensitive = true
         };
+
+        public List<PlaylistItem> FetchTrackLevelItems()
+        {
+            List<PlaylistItem> result = [];
+            ListenBrainzPlaylistParser parser = new(Settings);
+            ListenBrainzPlaylistRequestGenerator gen = new(Settings);
+
+            foreach (string playlistId in Settings.PlaylistIds ?? [])
+            {
+                if (string.IsNullOrWhiteSpace(playlistId))
+                    continue;
+
+                try
+                {
+                    ImportListRequest request = gen.CreatePlaylistRequest(playlistId);
+                    ImportListResponse resp = FetchImportListResponse(request);
+
+                    if (resp.HttpResponse.StatusCode == HttpStatusCode.OK)
+                        result.AddRange(parser.ParseTrackLevelItems(resp.Content));
+                    else
+                        _logger.Warn("HTTP {0} fetching playlist {1}", resp.HttpResponse.StatusCode, playlistId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "Error fetching track-level items for playlist {0}", playlistId);
+                }
+            }
+
+            return result;
+        }
     }
 }
