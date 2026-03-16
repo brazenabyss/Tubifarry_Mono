@@ -43,13 +43,17 @@ namespace Tubifarry.ImportLists.ListenBrainz.ListenBrainzPlaylist
             return new ImportListRequest(request);
         }
 
-        public string GetEndpointUrl() => (ListenBrainzPlaylistEndpointType)_settings.PlaylistType switch
+        public string GetEndpointUrl()
         {
-            ListenBrainzPlaylistEndpointType.Normal => $"{_settings.BaseUrl}/1/user/{_settings.AccessToken}/playlists",
-            ListenBrainzPlaylistEndpointType.CreatedFor => $"{_settings.BaseUrl}/1/user/{_settings.AccessToken}/playlists/createdfor",
-            ListenBrainzPlaylistEndpointType.Recommendations => $"{_settings.BaseUrl}/1/user/{_settings.AccessToken}/playlists/recommendations",
-            _ => $"{_settings.BaseUrl}/1/user/{_settings.AccessToken}/playlists"
-        };
+            string username = _settings.AccessToken?.Trim() ?? "";
+            return (ListenBrainzPlaylistEndpointType)_settings.PlaylistType switch
+            {
+                ListenBrainzPlaylistEndpointType.Normal => $"{_settings.BaseUrl}/1/user/{username}/playlists",
+                ListenBrainzPlaylistEndpointType.CreatedFor => $"{_settings.BaseUrl}/1/user/{username}/playlists/createdfor",
+                ListenBrainzPlaylistEndpointType.Recommendations => $"{_settings.BaseUrl}/1/user/{username}/playlists/recommendations",
+                _ => $"{_settings.BaseUrl}/1/user/{username}/playlists"
+            };
+        }
 
         public ImportListRequest CreateDiscoveryRequest(int count = 100, int offset = 0)
         {

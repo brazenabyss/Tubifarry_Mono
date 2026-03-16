@@ -40,7 +40,7 @@ namespace Tubifarry.ImportLists.ListenBrainz.ListenBrainzUserStats
             string endpoint = GetEndpoint();
             string range = GetTimeRange();
             HttpRequest request = requestBuilder.Build();
-            request.Url = new HttpUri($"{_settings.BaseUrl}/1/stats/user/{_settings.UserName}/{endpoint}?count={count}&offset={offset}&range={range}");
+            request.Url = new HttpUri($"{_settings.BaseUrl}/1/stats/user/{_settings.UserName?.Trim()}/{endpoint}?count={count}&offset={offset}&range={range}");
 
             return new ImportListRequest(request);
         }
