@@ -702,6 +702,24 @@ namespace Tubifarry.Core.Model
 
             if (!isInstalled)
             {
+                string? ffmpegEnv = Environment.GetEnvironmentVariable("FFMPEG");
+                if (!string.IsNullOrEmpty(ffmpegEnv))
+                {
+                    string dir = File.Exists(ffmpegEnv) ? Path.GetDirectoryName(ffmpegEnv)! : ffmpegEnv;
+                    if (Directory.Exists(dir))
+                    {
+                        string[] ffmpegPatterns = ["ffmpeg", "ffmpeg.exe", "ffmpeg.bin"];
+                        if (Directory.GetFiles(dir).Any(file => ffmpegPatterns.Contains(Path.GetFileName(file), StringComparer.OrdinalIgnoreCase) && IsExecutable(file)))
+                        {
+                            FFmpeg.SetExecutablesPath(dir);
+                            isInstalled = true;
+                        }
+                    }
+                }
+            }
+
+            if (!isInstalled)
+            {
                 foreach (string path in Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [])
                 {
                     if (Directory.Exists(path))
@@ -711,6 +729,7 @@ namespace Tubifarry.Core.Model
 
                         if (files.Any(file => ffmpegPatterns.Contains(Path.GetFileName(file), StringComparer.OrdinalIgnoreCase) && IsExecutable(file)))
                         {
+                            FFmpeg.SetExecutablesPath(path);
                             isInstalled = true;
                             break;
                         }
