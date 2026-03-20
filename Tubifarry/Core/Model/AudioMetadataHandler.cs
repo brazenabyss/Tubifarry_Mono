@@ -31,7 +31,7 @@ namespace Tubifarry.Core.Model
         {
             { AudioFormat.AAC,    new[] { "-codec:a aac", "-movflags +faststart", "-aac_coder twoloop" } },
             { AudioFormat.MP3,    new[] { "-codec:a libmp3lame" } },
-            { AudioFormat.Opus,   new[] { "-codec:a libopus", "-vbr on", "-application audio" } },
+            { AudioFormat.Opus,   new[] { "-codec:a libopus", "-vbr on", "-application audio", "-vn" } },
             { AudioFormat.Vorbis, new[] { "-codec:a libvorbis" } },
             { AudioFormat.FLAC,   new[] { "-codec:a flac", "-compression_level 8" } },
             { AudioFormat.ALAC,   new[] { "-codec:a alac" } },
@@ -164,15 +164,64 @@ namespace Tubifarry.Core.Model
 
         private static readonly string[] VideoFormats =
         [
-            "matroska", "webm",           // Matroska/WebM containers
-            "mov", "mp4", "m4a",          // QuickTime/MP4 containers
-            "avi",                        // AVI containers
-            "asf", "wmv", "wma",          // Windows Media containers
-            "flv", "f4v",                 // Flash containers
-            "3gp", "3g2",                 // 3GPP containers
-            "mxf",                        // Material Exchange Format
-            "ts", "m2ts"                  // Transport streams
+            "matroska", "webm",
+            "mov", "mp4", "m4a",
+            "avi",
+            "asf", "wmv", "wma",
+            "flv", "f4v",
+            "3gp", "3g2",
+            "mxf",
+            "ts", "m2ts"
         ];
+
+        private static readonly HashSet<string> CoverArtCodecs = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "mjpeg", "png", "bmp", "gif", "webp", "jpeg", "jpg", "tiff", "tif"
+        };
+
+        private async Task<byte[]?> TryExtractCoverArtAsync()
+        {
+            try
+            {
+                using TagLib.File file = TagLib.File.Create(TrackPath);
+                byte[]? data = file.Tag.Pictures?.FirstOrDefault()?.Data?.Data;
+                if (data?.Length > 0)
+                    return data;
+            }
+            catch { }
+
+            try
+            {
+                IMediaInfo mediaInfo = await FFmpeg.GetMediaInfo(TrackPath);
+                IVideoStream? coverStream = mediaInfo.VideoStreams
+                    .FirstOrDefault(vs => CoverArtCodecs.Contains(vs.Codec ?? ""));
+
+                if (coverStream == null)
+                    return null;
+
+                string tempCoverPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.jpg");
+                try
+                {
+                    IConversion conversion = FFmpeg.Conversions.New()
+                        .AddParameter($"-i \"{TrackPath}\"")
+                        .AddParameter("-an -vcodec copy")
+                        .SetOutput(tempCoverPath);
+
+                    await conversion.Start();
+
+                    if (File.Exists(tempCoverPath))
+                        return await File.ReadAllBytesAsync(tempCoverPath);
+                }
+                finally
+                {
+                    if (File.Exists(tempCoverPath))
+                        File.Delete(tempCoverPath);
+                }
+            }
+            catch { }
+
+            return null;
+        }
 
         /// <summary>
         /// Converts audio to the specified format with optional bitrate control.
@@ -207,6 +256,8 @@ namespace Tubifarry.Core.Model
             {
                 if (File.Exists(tempOutputPath))
                     File.Delete(tempOutputPath);
+
+                byte[]? preservedCoverArt = AlbumCover?.Length > 0 ? AlbumCover : await TryExtractCoverArtAsync();
 
                 IConversion conversion = await FFmpeg.Conversions.FromSnippet.Convert(TrackPath, tempOutputPath);
 
@@ -262,6 +313,26 @@ namespace Tubifarry.Core.Model
 
                 File.Move(tempOutputPath, finalOutputPath, true);
                 TrackPath = finalOutputPath;
+
+                if (preservedCoverArt?.Length > 0)
+                {
+                    try
+                    {
+                        using TagLib.File destFile = TagLib.File.Create(TrackPath);
+                        destFile.Tag.Pictures = [new TagLib.Picture(new TagLib.ByteVector(preservedCoverArt))
+                        {
+                            Type = TagLib.PictureType.FrontCover,
+                            Description = "Album Cover"
+                        }];
+                        destFile.Save();
+                        _logger?.Trace("Re-embedded cover art into converted file");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.Warn(ex, "Failed to re-embed cover art after conversion, cover art may be missing");
+                    }
+                }
+
                 return true;
             }
             catch (Exception ex)
@@ -276,12 +347,16 @@ namespace Tubifarry.Core.Model
             try
             {
                 IMediaInfo mediaInfo = await FFmpeg.GetMediaInfo(TrackPath);
-                if (mediaInfo.VideoStreams.Any())
+
+                bool hasRealVideo = mediaInfo.VideoStreams.Any(vs =>
+                    !CoverArtCodecs.Contains(vs.Codec ?? "") &&
+                    !(vs.Duration.TotalSeconds < 1 && vs.Framerate <= 1));
+
+                if (hasRealVideo)
                     return true;
 
                 string probeResult = await Probe.New().Start($"-v error -show_entries format=format_name -of default=noprint_wrappers=1:nokey=1 \"{TrackPath}\"");
                 string formatName = probeResult?.Trim().ToLower() ?? "";
-                _logger?.Trace($"Detected container format via ffprobe: '{formatName}'");
                 return VideoFormats.Any(container => formatName.Contains(container));
             }
             catch (Exception ex)
