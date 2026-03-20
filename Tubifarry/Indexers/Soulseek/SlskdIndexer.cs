@@ -6,6 +6,7 @@ using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser;
+using NzbDrone.Core.Parser.Model;
 using System.Net;
 using Tubifarry.Core.Replacements;
 using Tubifarry.Core.Telemetry;
@@ -33,6 +34,23 @@ namespace Tubifarry.Indexers.Soulseek
         {
             _parseIndexerResponse = new SlskdIndexerParser(this, indexerFactory, httpClient, slskdItemsParser);
             _indexerRequestGenerator = new SlskdRequestGenerator(this, slskdSearchChain, httpClient, sentry);
+        }
+
+        protected override IList<ReleaseInfo> CleanupReleases(IEnumerable<ReleaseInfo> releases, bool isRecent = false)
+        {
+            IList<ReleaseInfo> result = base.CleanupReleases(releases, isRecent);
+
+            foreach (ReleaseInfo release in result)
+            {
+                if (release is not TorrentInfo slskd)
+                    continue;
+
+                int basePriority = release.IndexerPriority;
+                int score = Math.Clamp(slskd.Seeders ?? 0, 0, 10000);
+                release.IndexerPriority = basePriority + 12 - (int)Math.Round(score / 10000.0 * 24);
+            }
+
+            return result;
         }
 
         protected override async Task Test(List<ValidationFailure> failures) => failures.AddIfNotNull(await TestConnection());

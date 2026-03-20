@@ -541,7 +541,7 @@ namespace Tubifarry.Indexers.Soulseek
         [GeneratedRegex(@"(?:^|\s|\(|\[)(?<negation>Non-?|Not\s+)?Explicit(?:\s|\)|\]|$)", RegexOptions.IgnoreCase | RegexOptions.ExplicitCapture | RegexOptions.Compiled, "de-DE")]
         private static partial Regex ExplicitTagRegex();
 
-        [GeneratedRegex(@"\((?<edition>(?:Super\s+)?Deluxe|Limited|Special|Expanded|Extended|Anniversary|Remaster(?:ed)?|Live|Acoustic|Unplugged|Japanese|Bonus|Instrumental|Collector'?s)(?:\s+(?:Edition|Version|Album|Tracks?|Exclusive))?\)", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+        [GeneratedRegex(@"[\(\[](?<edition>(?:(?:Super\s+)?Deluxe|Limited|Special|Expanded|Extended|Anniversary|Remaster(?:ed)?|Live|Acoustic|Unplugged|Japanese|Bonus|Instrumental|Collector'?s|Metal|Platinum|Gold|Clean|Tour|Censored|Uncensored|\d*\s*CD)(?:\s+(?:Edition|Version|Album|Tracks?|Exclusive))?|[^)\]]+?\s+(?:Edition|Version))[\)\]]", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
         private static partial Regex EditionRegex();
 
         [GeneratedRegex(@"\b(?:the|a|an|feat|featuring|ft|presents|pres|with|and)\b", RegexOptions.IgnoreCase | RegexOptions.ExplicitCapture | RegexOptions.Compiled, "de-DE")]

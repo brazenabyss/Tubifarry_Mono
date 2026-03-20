@@ -126,8 +126,8 @@ namespace Tubifarry.Indexers.Soulseek
         [FieldDefinition(10, Type = FieldType.Number, Label = "Min File Count", HelpText = "Minimum files per response", Advanced = true)]
         public int MinimumResponseFileCount { get; set; } = 1;
 
-        [FieldDefinition(11, Type = FieldType.Checkbox, Label = "Filter Unfitting Albums", HelpText = "Exclude releases with wrong track count", Advanced = true)]
-        public bool FilterUnfittingAlbums { get; set; }
+        [FieldDefinition(11, Type = FieldType.Select, SelectOptions = typeof(TrackCountFilterType), Label = "Track Count Filter", HelpText = "Filter releases by track count matching", Advanced = true)]
+        public int TrackCountFilter { get; set; } = (int)TrackCountFilterType.Disabled;
 
         [FieldDefinition(12, Type = FieldType.Number, Label = "Response Limit", HelpText = "Max search responses", Advanced = true)]
         public int ResponseLimit { get; set; } = 100;
@@ -160,5 +160,20 @@ namespace Tubifarry.Indexers.Soulseek
         public string? SearchTemplates { get; set; } = string.Empty;
 
         public NzbDroneValidationResult Validate() => new(Validator.Validate(this));
+    }
+
+    public enum TrackCountFilterType
+    {
+        [FieldOption(Label = "Disabled", Hint = "No track count filtering.")]
+        Disabled = 0,
+
+        [FieldOption(Label = "Exact", Hint = "Only allow releases matching the exact track count.")]
+        Exact = 1,
+
+        [FieldOption(Label = "Lower", Hint = "Filter out releases with fewer tracks than expected.")]
+        Lower = 2,
+
+        [FieldOption(Label = "Unfitting", Hint = "Exclude releases with significantly wrong track count.")]
+        Unfitting = 3
     }
 }

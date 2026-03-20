@@ -3,6 +3,7 @@ using NzbDrone.Common.Http;
 using NzbDrone.Common.Instrumentation;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Music;
 using System.Net;
@@ -44,9 +45,11 @@ namespace Tubifarry.Indexers.Soulseek
 
             Album? album = searchCriteria.Albums.FirstOrDefault();
             List<AlbumRelease>? albumReleases = album?.AlbumReleases?.Value;
-            int trackCount = albumReleases?.Any() == true ? albumReleases.Min(x => x.TrackCount) : 0;
-            List<string> tracks = albumReleases?.FirstOrDefault(x => x.Tracks?.Value is { Count: > 0 })?.Tracks?.Value?
-                .Where(x => !string.IsNullOrEmpty(x.Title)).Select(x => x.Title).ToList() ?? [];
+            AlbumRelease? monitoredRelease = albumReleases?.FirstOrDefault(r => r.Monitored);
+            int trackCount = monitoredRelease?.TrackCount
+                ?? (albumReleases?.Any() == true ? albumReleases.Min(x => x.TrackCount) : 0);
+            List<string> tracks = (monitoredRelease ?? albumReleases?.FirstOrDefault(x => x.Tracks?.Value is { Count: > 0 }))
+                ?.Tracks?.Value?.Where(x => !string.IsNullOrEmpty(x.Title)).Select(x => x.Title).ToList() ?? [];
 
             _processedSearches.Clear();
 
@@ -72,9 +75,11 @@ namespace Tubifarry.Indexers.Soulseek
 
             Album? album = searchCriteria.Albums.FirstOrDefault();
             List<AlbumRelease>? albumReleases = album?.AlbumReleases?.Value;
-            int trackCount = albumReleases?.Any() == true ? albumReleases.Min(x => x.TrackCount) : 0;
-            List<string> tracks = albumReleases?.FirstOrDefault(x => x.Tracks?.Value is { Count: > 0 })?.Tracks?.Value?
-                .Where(x => !string.IsNullOrEmpty(x.Title)).Select(x => x.Title).ToList() ?? [];
+            AlbumRelease? monitoredRelease = albumReleases?.FirstOrDefault(r => r.Monitored);
+            int trackCount = monitoredRelease?.TrackCount
+                ?? (albumReleases?.Any() == true ? albumReleases.Min(x => x.TrackCount) : 0);
+            List<string> tracks = (monitoredRelease ?? albumReleases?.FirstOrDefault(x => x.Tracks?.Value is { Count: > 0 }))
+                ?.Tracks?.Value?.Where(x => !string.IsNullOrEmpty(x.Title)).Select(x => x.Title).ToList() ?? [];
 
             _processedSearches.Clear();
 
@@ -120,6 +125,11 @@ namespace Tubifarry.Indexers.Soulseek
                     _logger.Trace($"GetRequestsAsync returned null for search: {searchText}");
                 }
             }
+            catch (RequestLimitReachedException)
+            {
+                _sentry.FinishSpan(span, SpanStatus.ResourceExhausted);
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.Error(ex, $"Error executing search: {searchText}");
@@ -145,6 +155,12 @@ namespace Tubifarry.Indexers.Soulseek
 
                 dynamic request = CreateResultRequest(searchId, query);
                 return new IndexerRequest(request);
+            }
+            catch (HttpException ex) when (ex.Response.StatusCode == HttpStatusCode.Conflict)
+            {
+                throw new RequestLimitReachedException(
+                    "Soulseek client is not connected (temporarily banned or disconnected). Indexer disabled.",
+                    TimeSpan.FromMinutes(15));
             }
             catch (HttpException ex) when (ex.Response.StatusCode == HttpStatusCode.NotFound)
             {
@@ -196,14 +212,30 @@ namespace Tubifarry.Indexers.Soulseek
                 .SetHeader("X-API-KEY", Settings.ApiKey)
                 .Build();
 
+            TrackCountFilterType filterType = (TrackCountFilterType)Settings.TrackCountFilter;
+
+            int minimumFiles = filterType switch
+            {
+                TrackCountFilterType.Exact or TrackCountFilterType.Lower or TrackCountFilterType.Unfitting
+                    => Math.Max(Settings.MinimumResponseFileCount, query.TrackCount),
+                _ => Settings.MinimumResponseFileCount
+            };
+
+            int? maximumFiles = filterType switch
+            {
+                TrackCountFilterType.Exact => query.TrackCount,
+                TrackCountFilterType.Unfitting => query.TrackCount + Math.Max(2, (int)Math.Ceiling(Math.Log(query.TrackCount) * 1.67)),
+                _ => null
+            };
+
             request.ContentSummary = new
             {
                 Album = query.Album ?? "",
                 Artist = query.Artist,
                 Interactive = query.Interactive,
                 ExpandDirectory = query.ExpandDirectory,
-                MimimumFiles = Math.Max(Settings.MinimumResponseFileCount, Settings.FilterUnfittingAlbums ? query.TrackCount : 1),
-                MaximumFiles = Settings.FilterUnfittingAlbums ? (int?)(query.TrackCount + Math.Max(2, (int)Math.Ceiling(Math.Log(query.TrackCount) * 1.67))) : null
+                MimimumFiles = minimumFiles,
+                MaximumFiles = maximumFiles
             }.ToJson();
 
             return request;

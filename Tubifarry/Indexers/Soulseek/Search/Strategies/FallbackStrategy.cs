@@ -5,7 +5,7 @@ namespace Tubifarry.Indexers.Soulseek.Search.Strategies;
 
 public sealed class WildcardStrategy : SearchStrategyBase
 {
-    public override string Name => "Wildcard";
+    public override string Name => "Trimmed Fallback";
     public override SearchTier Tier => SearchTier.Fallback;
     public override int Priority => 0;
 
@@ -20,7 +20,7 @@ public sealed class WildcardStrategy : SearchStrategyBase
 
     public override string? GetQuery(SearchContext context, QueryType queryType)
     {
-        string artistWildcard = QueryBuilder.BuildWildcard(context.SearchArtist);
+        string artistWildcard = QueryBuilder.BuildTrimmed(context.SearchArtist);
 
         if (context.IsSelfTitled)
         {
@@ -32,7 +32,7 @@ public sealed class WildcardStrategy : SearchStrategyBase
                 : artistWildcard;
         }
 
-        string albumWildcard = QueryBuilder.BuildWildcard(context.SearchAlbum);
+        string albumWildcard = QueryBuilder.BuildTrimmed(context.SearchAlbum);
         return QueryBuilder.Build(artistWildcard, albumWildcard);
     }
 }

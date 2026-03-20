@@ -85,19 +85,20 @@ namespace Tubifarry.Indexers.Soulseek
 
                         if (searchTextData.MinimumFiles > 0 || searchTextData.MaximumFiles.HasValue)
                         {
-                            int fileCount = Settings.FilterUnfittingAlbums
+                            bool filterActive = (TrackCountFilterType)Settings.TrackCountFilter != TrackCountFilterType.Disabled;
+                            int fileCount = filterActive
                                 ? finalGroup.Count(f => AudioFormatHelper.GetAudioCodecFromExtension(f.Extension ?? Path.GetExtension(f.Filename) ?? "") != AudioFormat.Unknown)
                                 : finalGroup.Count();
 
                             if (fileCount < searchTextData.MinimumFiles)
                             {
-                                _logger.Trace($"Filtered (too few): {directoryGroup.Key} ({fileCount}/{searchTextData.MinimumFiles} {(Settings.FilterUnfittingAlbums ? "audio tracks" : "files")})");
+                                _logger.Trace($"Filtered (too few): {directoryGroup.Key} ({fileCount}/{searchTextData.MinimumFiles} {(filterActive ? "audio tracks" : "files")})");
                                 continue;
                             }
 
                             if (searchTextData.MaximumFiles.HasValue && fileCount > searchTextData.MaximumFiles.Value)
                             {
-                                _logger.Trace($"Filtered (too many): {directoryGroup.Key} ({fileCount}/{searchTextData.MaximumFiles} {(Settings.FilterUnfittingAlbums ? "audio tracks" : "files")})");
+                                _logger.Trace($"Filtered (too many): {directoryGroup.Key} ({fileCount}/{searchTextData.MaximumFiles} {(filterActive ? "audio tracks" : "files")})");
                                 continue;
                             }
                         }

@@ -11,7 +11,7 @@ public static partial class QueryBuilder
         "being", "have", "has", "had", "do", "does", "did", "from", "into"
     };
 
-    private const int MinWordLengthForWildcard = 4;
+    private const int MinWordLengthForTrim = 4;
     private const int MinAlbumLengthForPartial = 15;
     private const int MinSignificantWordsForPartial = 2;
 
@@ -54,7 +54,7 @@ public static partial class QueryBuilder
         return text;
     }
 
-    public static string BuildWildcard(string? text)
+    public static string BuildTrimmed(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return string.Empty;
@@ -62,8 +62,8 @@ public static partial class QueryBuilder
         string[] words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         for (int i = 0; i < words.Length; i++)
         {
-            if (words[i].Length >= MinWordLengthForWildcard && !StopWords.Contains(words[i]))
-                words[i] = words[i][..^1] + "*";
+            if (words[i].Length >= MinWordLengthForTrim && !StopWords.Contains(words[i]))
+                words[i] = words[i][..^1];
         }
         return string.Join(" ", words);
     }
@@ -199,7 +199,7 @@ public static partial class QueryBuilder
 
         if (int.TryParse(number, out arabic) && arabic is > 0 and <= 15)
         {
-            var roman = RomanToArabic.FirstOrDefault(x => x.Value == arabic);
+            KeyValuePair<string, int> roman = RomanToArabic.FirstOrDefault(x => x.Value == arabic);
             if (!string.IsNullOrEmpty(roman.Key))
                 return roman.Key;
         }
