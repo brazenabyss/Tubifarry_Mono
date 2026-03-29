@@ -1,4 +1,3 @@
-﻿using Tubifarry.Download.Clients.YouTube;
 
 namespace Tubifarry.Core.Utilities
 {
@@ -152,17 +151,6 @@ namespace Tubifarry.Core.Utilities
             _ => ".aac" // Default to AAC if the format is unknown
         };
 
-        /// <summary>
-        /// Converts a <see cref="ReEncodeOptions"/> value to the corresponding <see cref="AudioFormat"/>.
-        /// </summary>
-        public static AudioFormat ConvertOptionToAudioFormat(ReEncodeOptions reEncodeOption) => reEncodeOption switch
-        {
-            ReEncodeOptions.AAC => AudioFormat.AAC,
-            ReEncodeOptions.MP3 => AudioFormat.MP3,
-            ReEncodeOptions.Opus => AudioFormat.Opus,
-            ReEncodeOptions.Vorbis => AudioFormat.Vorbis,
-            _ => AudioFormat.Unknown
-        };
 
         /// <summary>
         /// Determines if a given format is lossy.
