@@ -5,24 +5,49 @@ using System.Text.Json;
 using Tubifarry.Core.Utilities;
 using Tubifarry.Download.Base;
 using Tubifarry.Indexers.Monochrome;
+using NzbDrone.Core.Download;
 
 namespace Tubifarry.Download.Clients.Monochrome
 {
     public class MonochromeDownloadRequest : BaseDownloadRequest<MonochromeDownloadOptions>
     {
         private static readonly HttpClient _httpClient = new();
+        private MonochromeDownloadState _state = MonochromeDownloadState.Idle;
+        private Task? _downloadTask;
+
+        
 
         public MonochromeDownloadRequest(RemoteAlbum remoteAlbum, MonochromeDownloadOptions options)
             : base(remoteAlbum, options) { }
 
         public override void Start()
         {
-            _ = Task.Run(async () =>
+            if (_state == MonochromeDownloadState.Running) return;
+            _state = MonochromeDownloadState.Running;
+            _downloadTask = Task.Run(async () =>
             {
-                try { await ProcessDownloadAsync(CancellationToken.None); }
-                catch (Exception ex) { _logger.Error(ex, "Monochrome download failed for {Id}", Options.ItemId); }
+                try
+                {
+                    await ProcessDownloadAsync(CancellationToken.None);
+                    _state = MonochromeDownloadState.Completed;
+                    _logger.Debug("Monochrome download completed for {Id}", Options.ItemId);
+                }
+                catch (Exception ex)
+                {
+                    _state = MonochromeDownloadState.Failed;
+                    _logger.Error(ex, "Monochrome download failed for {Id}", Options.ItemId);
+                }
             });
         }
+
+        public override DownloadItemStatus GetDownloadItemStatus() => _state switch
+        {
+            MonochromeDownloadState.Idle      => DownloadItemStatus.Queued,
+            MonochromeDownloadState.Running   => DownloadItemStatus.Downloading,
+            MonochromeDownloadState.Completed => DownloadItemStatus.Completed,
+            MonochromeDownloadState.Failed    => DownloadItemStatus.Failed,
+            _                                 => DownloadItemStatus.Warning
+        };
 
         protected override async Task ProcessDownloadAsync(CancellationToken token)
         {

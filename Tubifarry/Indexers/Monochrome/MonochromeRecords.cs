@@ -181,3 +181,14 @@ namespace Tubifarry.Indexers.Monochrome
         public string ArtistName => Artists?.FirstOrDefault()?.Name ?? "Unknown Artist";
     }
 }
+
+namespace Tubifarry.Download.Clients.Monochrome
+{
+    public enum MonochromeDownloadState
+    {
+        Idle,
+        Running,
+        Completed,
+        Failed
+    }
+}
