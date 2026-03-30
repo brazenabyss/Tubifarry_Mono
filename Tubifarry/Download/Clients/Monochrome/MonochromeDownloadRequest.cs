@@ -1,4 +1,3 @@
-using NzbDrone.Core.Music;
 using NzbDrone.Core.Parser.Model;
 using System.Net.Http;
 using System.Text;
@@ -15,6 +14,15 @@ namespace Tubifarry.Download.Clients.Monochrome
 
         public MonochromeDownloadRequest(RemoteAlbum remoteAlbum, MonochromeDownloadOptions options)
             : base(remoteAlbum, options) { }
+
+        public override void Start()
+        {
+            _ = Task.Run(async () =>
+            {
+                try { await ProcessDownloadAsync(CancellationToken.None); }
+                catch (Exception ex) { _logger.Error(ex, "Monochrome download failed for {Id}", Options.ItemId); }
+            });
+        }
 
         protected override async Task ProcessDownloadAsync(CancellationToken token)
         {
