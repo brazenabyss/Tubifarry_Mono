@@ -2,7 +2,16 @@ using System.Text.Json.Serialization;
 
 namespace Tubifarry.Indexers.Monochrome
 {
-    public class MonochromeSearchResult
+    public class MonochromeResponse
+    {
+        [JsonPropertyName("version")]
+        public string? Version { get; set; }
+
+        [JsonPropertyName("data")]
+        public MonochromeSearchData? Data { get; set; }
+    }
+
+    public class MonochromeSearchData
     {
         [JsonPropertyName("albums")]
         public MonochromeAlbumList? Albums { get; set; }
@@ -49,14 +58,45 @@ namespace Tubifarry.Indexers.Monochrome
         [JsonPropertyName("audioModes")]
         public List<string>? AudioModes { get; set; }
 
-        [JsonPropertyName("artist")]
-        public MonochromeArtist? Artist { get; set; }
+        [JsonPropertyName("mediaMetadata")]
+        public MonochromeMediaMetadata? MediaMetadata { get; set; }
+
+        [JsonPropertyName("artists")]
+        public List<MonochromeArtist>? Artists { get; set; }
 
         [JsonPropertyName("cover")]
         public string? Cover { get; set; }
 
         [JsonPropertyName("explicit")]
         public bool Explicit { get; set; }
+
+        [JsonPropertyName("type")]
+        public string? Type { get; set; }
+
+        // Convenience: primary artist name
+        public string ArtistName => Artists?.FirstOrDefault()?.Name ?? "Unknown Artist";
+
+        // Cover art URL from UUID
+        public string CoverUrl => string.IsNullOrEmpty(Cover)
+            ? string.Empty
+            : $"https://resources.tidal.com/images/{Cover.Replace('-', '/')}/1280x1280.jpg";
+
+        public bool IsHiRes => MediaMetadata?.Tags?.Contains("HIRES_LOSSLESS") == true;
+    }
+
+    public class MonochromeMediaMetadata
+    {
+        [JsonPropertyName("tags")]
+        public List<string>? Tags { get; set; }
+    }
+
+    public class MonochromeArtist
+    {
+        [JsonPropertyName("id")]
+        public long Id { get; set; }
+
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
     }
 
     public class MonochromeTrack
@@ -70,14 +110,17 @@ namespace Tubifarry.Indexers.Monochrome
         [JsonPropertyName("trackNumber")]
         public int TrackNumber { get; set; }
 
+        [JsonPropertyName("volumeNumber")]
+        public int VolumeNumber { get; set; }
+
         [JsonPropertyName("duration")]
         public int Duration { get; set; }
 
         [JsonPropertyName("audioQuality")]
         public string? AudioQuality { get; set; }
 
-        [JsonPropertyName("artist")]
-        public MonochromeArtist? Artist { get; set; }
+        [JsonPropertyName("artists")]
+        public List<MonochromeArtist>? Artists { get; set; }
 
         [JsonPropertyName("album")]
         public MonochromeAlbum? Album { get; set; }
@@ -87,15 +130,8 @@ namespace Tubifarry.Indexers.Monochrome
 
         [JsonPropertyName("manifestMimeType")]
         public string? ManifestMimeType { get; set; }
-    }
 
-    public class MonochromeArtist
-    {
-        [JsonPropertyName("id")]
-        public long Id { get; set; }
-
-        [JsonPropertyName("name")]
-        public string? Name { get; set; }
+        public string ArtistName => Artists?.FirstOrDefault()?.Name ?? "Unknown Artist";
     }
 
     public class MonochromeManifest
@@ -133,13 +169,15 @@ namespace Tubifarry.Indexers.Monochrome
         [JsonPropertyName("audioQuality")]
         public string? AudioQuality { get; set; }
 
-        [JsonPropertyName("artist")]
-        public MonochromeArtist? Artist { get; set; }
+        [JsonPropertyName("artists")]
+        public List<MonochromeArtist>? Artists { get; set; }
 
         [JsonPropertyName("cover")]
         public string? Cover { get; set; }
 
         [JsonPropertyName("tracks")]
         public MonochromeTrackList? Tracks { get; set; }
+
+        public string ArtistName => Artists?.FirstOrDefault()?.Name ?? "Unknown Artist";
     }
 }

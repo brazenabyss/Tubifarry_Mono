@@ -20,20 +20,24 @@ namespace Tubifarry.Indexers.Monochrome
             List<ReleaseInfo> releases = new();
             try
             {
-                MonochromeSearchResult? result = JsonSerializer.Deserialize<MonochromeSearchResult>(
+                MonochromeResponse? response = JsonSerializer.Deserialize<MonochromeResponse>(
                     indexerResponse.Content, IndexerParserHelper.StandardJsonOptions);
 
-                if (result?.Albums?.Items == null || result.Albums.Items.Count == 0)
+                List<MonochromeAlbum>? albums = response?.Data?.Albums?.Items;
+
+                if (albums == null || albums.Count == 0)
                 {
-                    _logger.Trace("No album results returned from Monochrome search");
+                    _logger.Trace("No album results from Monochrome search");
                     return releases;
                 }
 
-                string quality = indexerResponse.Request.HttpRequest.Headers["X-Quality"] ?? MonochromeQuality.HI_RES_LOSSLESS.ToString();
+                string quality = indexerResponse.Request.HttpRequest.Headers["X-Quality"]
+                    ?? MonochromeQuality.HI_RES_LOSSLESS.ToString();
+
                 string baseUrl = $"{indexerResponse.Request.HttpRequest.Url.Scheme}://{indexerResponse.Request.HttpRequest.Url.Host}";
 
                 IndexerParserHelper.ProcessItems(
-                    result.Albums.Items,
+                    albums,
                     album => MapAlbumToData(album, quality, baseUrl),
                     releases);
             }
@@ -46,20 +50,24 @@ namespace Tubifarry.Indexers.Monochrome
 
         private AlbumData MapAlbumToData(MonochromeAlbum album, string quality, string baseUrl)
         {
-            (AudioFormat format, int bitrate, int bitDepth) = ResolveQuality(album.AudioQuality ?? quality);
+            // Prefer actual quality from API response, fall back to requested quality
+            string effectiveQuality = album.IsHiRes ? "HI_RES_LOSSLESS"
+                : album.AudioQuality ?? quality;
+
+            (AudioFormat format, int bitrate, int bitDepth) = ResolveQuality(effectiveQuality);
 
             return new AlbumData("Monochrome", nameof(MonochromeDownloadProtocol))
             {
                 Guid = $"Monochrome-album-{album.Id}",
                 AlbumId = $"{baseUrl}/album/?id={album.Id}",
                 AlbumName = album.Title ?? "Unknown Album",
-                ArtistName = album.Artist?.Name ?? "Unknown Artist",
+                ArtistName = album.ArtistName,
                 InfoUrl = $"https://tidal.com/browse/album/{album.Id}",
                 TotalTracks = album.NumberOfTracks,
                 Duration = album.Duration,
                 ReleaseDate = album.ReleaseDate ?? DateTime.UtcNow.ToString("yyyy-MM-dd"),
                 ReleaseDatePrecision = "day",
-                CustomString = album.Cover ?? string.Empty,
+                CustomString = album.CoverUrl,
                 Codec = format,
                 Bitrate = bitrate,
                 BitDepth = bitDepth,
@@ -71,10 +79,10 @@ namespace Tubifarry.Indexers.Monochrome
         private static (AudioFormat Format, int Bitrate, int BitDepth) ResolveQuality(string audioQuality) =>
             audioQuality switch
             {
-                "HI_RES_LOSSLESS" => (AudioFormat.FLAC, 9216, 24),
-                "LOSSLESS"        => (AudioFormat.FLAC, 1411, 16),
-                "HIGH"            => (AudioFormat.AAC, 320, 0),
-                _                 => (AudioFormat.AAC, 96, 0)
+                "HI_RES_LOSSLESS" or "HIRES_LOSSLESS" => (AudioFormat.FLAC, 9216, 24),
+                "LOSSLESS"                             => (AudioFormat.FLAC, 1411, 16),
+                "HIGH"                                 => (AudioFormat.AAC, 320, 0),
+                _                                      => (AudioFormat.AAC, 96, 0)
             };
     }
 }

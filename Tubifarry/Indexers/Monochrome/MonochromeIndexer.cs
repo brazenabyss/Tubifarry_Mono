@@ -5,6 +5,7 @@ using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.ThingiProvider;
+using System.Text.Json;
 
 namespace Tubifarry.Indexers.Monochrome
 {
@@ -17,10 +18,10 @@ namespace Tubifarry.Indexers.Monochrome
         public override string Protocol => nameof(MonochromeDownloadProtocol);
         public override bool SupportsRss => false;
         public override bool SupportsSearch => true;
-        public override int PageSize => 20;
+        public override int PageSize => 25;
         public override TimeSpan RateLimit => TimeSpan.FromSeconds(1);
         public override ProviderMessage Message => new(
-            "Monochrome provides lossless music via the HiFi API (Tidal backend). No account required.",
+            "Monochrome provides lossless music via the Tidal backend. No account required.",
             ProviderMessageType.Info);
 
         public MonochromeIndexer(
@@ -41,22 +42,39 @@ namespace Tubifarry.Indexers.Monochrome
         {
             try
             {
-                string testUrl = $"{Settings.BaseUrl.TrimEnd('/')}/search/?q=test&type=ALBUMS&limit=1";
+                // Use a known artist search to validate the API is responding correctly
+                string testUrl = $"{Settings.BaseUrl.TrimEnd('/')}/search/?a=radiohead";
                 HttpRequest req = new(testUrl) { RequestTimeout = TimeSpan.FromSeconds(15) };
                 req.Headers["User-Agent"] = Tubifarry.UserAgent;
+
                 HttpResponse response = await _httpClient.ExecuteAsync(req);
-                if (!response.HasHttpError)
+
+                if (response.HasHttpError)
                 {
-                    _logger.Debug("Successfully connected to Monochrome instance at {Url}", Settings.BaseUrl);
+                    failures.Add(new ValidationFailure("BaseUrl",
+                        $"Could not connect to Monochrome API: HTTP {response.StatusCode}"));
                     return;
                 }
-                failures.Add(new ValidationFailure("BaseUrl",
-                    $"Could not connect to Monochrome instance: HTTP {response.StatusCode}"));
+
+                // Validate the response is actually a Monochrome API response
+                MonochromeResponse? parsed = JsonSerializer.Deserialize<MonochromeResponse>(
+                    response.Content,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (parsed?.Data == null)
+                {
+                    failures.Add(new ValidationFailure("BaseUrl",
+                        "The URL does not appear to be a valid Monochrome API instance — unexpected response format."));
+                    return;
+                }
+
+                _logger.Debug("Successfully connected to Monochrome API at {Url} (version {Version})",
+                    Settings.BaseUrl, parsed.Version);
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Error connecting to Monochrome API");
-                failures.Add(new ValidationFailure("BaseUrl", ex.Message));
+                failures.Add(new ValidationFailure("BaseUrl", $"Connection failed: {ex.Message}"));
             }
         }
 
