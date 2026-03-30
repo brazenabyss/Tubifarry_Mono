@@ -1,3 +1,4 @@
+using Tubifarry.Indexers.Monochrome;
 using NLog;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Indexers;
@@ -55,7 +56,7 @@ namespace Tubifarry.Indexers.Monochrome
                 LogHttpError = true
             };
             req.Headers["User-Agent"] = Tubifarry.UserAgent;
-            req.Headers["X-Quality"] = _settings.Quality;
+            req.Headers["X-Quality"] = _settings.Quality.ToString();
             return new IndexerRequest(req);
         }
     }

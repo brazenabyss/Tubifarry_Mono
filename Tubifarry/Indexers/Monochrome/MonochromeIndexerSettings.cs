@@ -25,7 +25,7 @@ namespace Tubifarry.Indexers.Monochrome
         public MonochromeIndexerSettings()
         {
             BaseUrl = "https://hifi.402d65.dev";
-            Quality = "HI_RES_LOSSLESS";
+            Quality = (int)MonochromeQuality.HI_RES_LOSSLESS;
             SearchLimit = 20;
             RequestTimeout = 60;
         }
@@ -38,7 +38,7 @@ namespace Tubifarry.Indexers.Monochrome
         [FieldDefinition(1, Label = "Quality", Type = FieldType.Select,
             SelectOptions = typeof(MonochromeQuality),
             HelpText = "Preferred audio quality tier")]
-        public string Quality { get; set; }
+        public int Quality { get; set; }
 
         [FieldDefinition(2, Label = "Search Limit", Type = FieldType.Number,
             HelpText = "Maximum number of results per search", Advanced = true)]

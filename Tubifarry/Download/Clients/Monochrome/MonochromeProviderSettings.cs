@@ -22,7 +22,7 @@ namespace Tubifarry.Download.Clients.Monochrome
         public MonochromeProviderSettings()
         {
             BaseUrl = "https://hifi.402d65.dev";
-            Quality = "HI_RES_LOSSLESS";
+            Quality = (int)MonochromeQuality.HI_RES_LOSSLESS;
             DownloadPath = "/downloads/monochrome";
             MaxDownloadSpeed = 0;
             ConnectionRetries = 3;
@@ -37,7 +37,7 @@ namespace Tubifarry.Download.Clients.Monochrome
         [FieldDefinition(1, Label = "Quality", Type = FieldType.Select,
             SelectOptions = typeof(MonochromeQuality),
             HelpText = "Audio quality for downloads")]
-        public string Quality { get; set; }
+        public int Quality { get; set; }
 
         [FieldDefinition(2, Label = "Download Path", Type = FieldType.Path,
             HelpText = "Folder where Monochrome downloads will be saved")]

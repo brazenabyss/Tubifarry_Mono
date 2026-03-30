@@ -29,7 +29,7 @@ namespace Tubifarry.Indexers.Monochrome
                     return releases;
                 }
 
-                string quality = indexerResponse.Request.HttpRequest.Headers["X-Quality"] ?? "HI_RES_LOSSLESS";
+                string quality = indexerResponse.Request.HttpRequest.Headers["X-Quality"] ?? MonochromeQuality.HI_RES_LOSSLESS.ToString();
                 string baseUrl = $"{indexerResponse.Request.HttpRequest.Url.Scheme}://{indexerResponse.Request.HttpRequest.Url.Host}";
 
                 IndexerParserHelper.ProcessItems(

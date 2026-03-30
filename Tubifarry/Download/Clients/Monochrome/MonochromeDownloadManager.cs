@@ -1,3 +1,4 @@
+using Tubifarry.Indexers.Monochrome;
 using NLog;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Indexers;
@@ -33,7 +34,7 @@ namespace Tubifarry.Download.Clients.Monochrome
                 Handler = _requesthandler,
                 DownloadPath = provider.Settings.DownloadPath,
                 BaseUrl = provider.Settings.BaseUrl,
-                Quality = provider.Settings.Quality,
+                Quality = ((MonochromeQuality)provider.Settings.Quality).ToString(),
                 MaxDownloadSpeed = provider.Settings.MaxDownloadSpeed * 1024,
                 ConnectionRetries = provider.Settings.ConnectionRetries,
                 NamingConfig = namingConfig,
