@@ -48,6 +48,11 @@ public class SlskdFileState(SlskdDownloadFile file)
     {
         _ when state.HasFlag(TransferStates.Completed) && state.HasFlag(TransferStates.Succeeded) => DownloadItemStatus.Completed,
         _ when state.HasFlag(TransferStates.Completed) => DownloadItemStatus.Failed,
+        _ when state.HasFlag(TransferStates.Rejected) => DownloadItemStatus.Failed,
+        _ when state.HasFlag(TransferStates.TimedOut) => DownloadItemStatus.Failed,
+        _ when state.HasFlag(TransferStates.Errored) => DownloadItemStatus.Failed,
+        _ when state.HasFlag(TransferStates.Cancelled) => DownloadItemStatus.Failed,
+        _ when state.HasFlag(TransferStates.Aborted) => DownloadItemStatus.Failed,
         _ when state.HasFlag(TransferStates.InProgress) => DownloadItemStatus.Downloading,
         _ when state.HasFlag(TransferStates.Initializing) => DownloadItemStatus.Queued,
         _ when state.HasFlag(TransferStates.Queued) => DownloadItemStatus.Queued,

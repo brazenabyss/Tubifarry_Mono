@@ -6,8 +6,9 @@ namespace Tubifarry.Core.Telemetry
         public enum ImportFailureReason
         {
             MissingTracks,
+            UnmatchedTracks,
             AlbumMatchNotClose,
-            Both,
+            MixedTrackIssues,
             Unknown
         }
 
@@ -32,8 +33,9 @@ namespace Tubifarry.Core.Telemetry
             string reasonStr = failureReason switch
             {
                 ImportFailureReason.MissingTracks => "missing_tracks",
+                ImportFailureReason.UnmatchedTracks => "unmatched_tracks",
                 ImportFailureReason.AlbumMatchNotClose => "album_match_not_close",
-                ImportFailureReason.Both => "both",
+                ImportFailureReason.MixedTrackIssues => "mixed_track_issues",
                 _ => "unknown"
             };
 
@@ -45,7 +47,14 @@ namespace Tubifarry.Core.Telemetry
                 ["slskd.regex_match"] = context?.RegexMatchType ?? "unknown",
                 ["slskd.interactive"] = (context?.IsInteractive ?? false).ToString().ToLower(),
                 ["slskd.codec"] = context?.Codec ?? "unknown",
-                ["slskd.has_free_slot"] = (context?.HasFreeSlot ?? false).ToString().ToLower()
+                ["slskd.has_free_slot"] = (context?.HasFreeSlot ?? false).ToString().ToLower(),
+
+                ["slskd.fuzzy_artist_weak"] = ((context?.FuzzyArtistScore ?? 100) < 90).ToString().ToLower(),
+                ["slskd.fuzzy_album_weak"] = ((context?.FuzzyAlbumScore ?? 100) < 90).ToString().ToLower(),
+                ["slskd.track_count_mismatch"] = ((context?.TrackCountExpected ?? 0) != (context?.TrackCountActual ?? 0)).ToString().ToLower(),
+                ["slskd.had_regex_match"] = (context?.RegexMatchType != "none").ToString().ToLower(),
+                ["slskd.multiple_candidates"] = ((context?.AllCandidates?.Count ?? 0) > 1).ToString().ToLower(),
+                ["slskd.grabbed_top_candidate"] = (context?.LidarrUsedOurTop ?? false).ToString().ToLower()
             };
 
             Dictionary<string, object> extras = new()
@@ -63,7 +72,24 @@ namespace Tubifarry.Core.Telemetry
                 ["queue_length"] = context?.QueueLength ?? 0,
                 ["search_strategy"] = context?.Strategy ?? "",
                 ["bitrate"] = context?.Bitrate ?? 0,
-                ["bit_depth"] = context?.BitDepth ?? 0
+                ["bit_depth"] = context?.BitDepth ?? 0,
+
+                ["expected_tracks"] = context?.ExpectedTracks ?? new List<string>(),
+                ["expected_track_count"] = context?.ExpectedTrackCount ?? 0,
+
+                ["our_top_priority"] = context?.OurTopPriority ?? 0,
+                ["grabbed_priority"] = context?.GrabbedPriority ?? 0,
+                ["grabbed_was_top_priority"] = context?.LidarrUsedOurTop ?? false,
+                ["candidate_count"] = context?.AllCandidates?.Count ?? 0,
+
+                ["settings.track_count_filter"] = context?.SettingsTrackCountFilter ?? -1,
+                ["settings.normalized_search"] = context?.SettingsNormalizedSearch ?? false,
+                ["settings.append_year"] = context?.SettingsAppendYear ?? false,
+                ["settings.volume_variations"] = context?.SettingsHandleVolumeVariations ?? false,
+                ["settings.fallback_search"] = context?.SettingsUseFallbackSearch ?? false,
+                ["settings.track_fallback"] = context?.SettingsUseTrackFallback ?? false,
+                ["settings.minimum_results"] = context?.SettingsMinimumResults ?? 0,
+                ["settings.has_templates"] = context?.SettingsHasTemplates ?? false
             };
 
             if (statusMessages != null && statusMessages.Count > 0)
@@ -71,6 +97,24 @@ namespace Tubifarry.Core.Telemetry
 
             if (context?.DirectoryFiles != null && context.DirectoryFiles.Count > 0)
                 extras["directory_listing"] = context.DirectoryFiles;
+
+            if (context?.AllCandidates != null && context.AllCandidates.Count > 0)
+            {
+                extras["candidates"] = context.AllCandidates
+                    .OrderByDescending(c => c.Priority)
+                    .Select(c => new
+                    {
+                        folder = c.FolderName,
+                        regex = c.RegexMatchType,
+                        fuzzy_artist = c.FuzzyArtist,
+                        fuzzy_album = c.FuzzyAlbum,
+                        priority = c.Priority,
+                        tracks = c.TrackCount,
+                        codec = c.Codec,
+                        username = c.Username,
+                        grabbed = c.WasGrabbed
+                    }).ToList();
+            }
 
             if (context?.Breadcrumbs != null)
             {
@@ -81,6 +125,58 @@ namespace Tubifarry.Core.Telemetry
 
             string message = $"slskd import failed: {reasonStr} for '{context?.Artist ?? "unknown"} - {context?.Album ?? "unknown"}'";
             sentry.CaptureEvent(message, fingerprint, tags, extras, SentryLevel.Warning);
+        }
+
+        public static void EmitImportSuccess(
+            ISentryHelper sentry,
+            SlskdBufferedContext? context)
+        {
+            if (!sentry.IsEnabled)
+                return;
+
+            string[] fingerprint = ["slskd-import-success"];
+
+            Dictionary<string, string> tags = new()
+            {
+                ["slskd.regex_match"] = context?.RegexMatchType ?? "unknown",
+                ["slskd.interactive"] = (context?.IsInteractive ?? false).ToString().ToLower(),
+                ["slskd.codec"] = context?.Codec ?? "unknown",
+                ["slskd.has_free_slot"] = (context?.HasFreeSlot ?? false).ToString().ToLower(),
+                ["slskd.grabbed_top_candidate"] = (context?.LidarrUsedOurTop ?? false).ToString().ToLower(),
+                ["slskd.track_count_filter"] = context?.SettingsTrackCountFilter?.ToString() ?? "unknown"
+            };
+
+            Dictionary<string, object> extras = new()
+            {
+                ["search_query"] = context?.SearchQuery ?? "",
+                ["folder_path"] = context?.FolderPath ?? "",
+                ["fuzzy_artist_score"] = context?.FuzzyArtistScore ?? 0,
+                ["fuzzy_album_score"] = context?.FuzzyAlbumScore ?? 0,
+                ["priority"] = context?.Priority ?? 0,
+                ["track_count_expected"] = context?.TrackCountExpected ?? 0,
+                ["track_count_actual"] = context?.TrackCountActual ?? 0,
+                ["candidate_count"] = context?.AllCandidates?.Count ?? 0,
+                ["grabbed_was_top_priority"] = context?.LidarrUsedOurTop ?? false,
+
+                ["settings.track_count_filter"] = context?.SettingsTrackCountFilter ?? -1,
+                ["settings.normalized_search"] = context?.SettingsNormalizedSearch ?? false,
+                ["settings.append_year"] = context?.SettingsAppendYear ?? false,
+                ["settings.volume_variations"] = context?.SettingsHandleVolumeVariations ?? false,
+                ["settings.fallback_search"] = context?.SettingsUseFallbackSearch ?? false,
+                ["settings.track_fallback"] = context?.SettingsUseTrackFallback ?? false,
+                ["settings.minimum_results"] = context?.SettingsMinimumResults ?? 0,
+                ["settings.has_templates"] = context?.SettingsHasTemplates ?? false
+            };
+
+            if (context?.Breadcrumbs != null)
+            {
+                foreach (string breadcrumb in context.Breadcrumbs)
+                    sentry.AddBreadcrumb(breadcrumb, "slskd");
+            }
+            sentry.AddBreadcrumb("Import Success", "slskd");
+
+            string message = $"slskd import success: '{context?.Artist ?? "unknown"} - {context?.Album ?? "unknown"}'";
+            sentry.CaptureEvent(message, fingerprint, tags, extras, SentryLevel.Info);
         }
 
         public static void EmitUserReplaced(

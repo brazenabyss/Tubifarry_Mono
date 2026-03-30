@@ -152,6 +152,17 @@ namespace Tubifarry.Indexers.Soulseek
                 await ExecuteSearchAsync(searchRequest, searchId);
 
                 _sentry.LogSearch(searchId, searchText, query.Artist, query.Album, "SlskdSearch", 0);
+                _sentry.LogSearchSettings(
+                    searchId,
+                    Settings.TrackCountFilter,
+                    Settings.NormalizedSeach,
+                    Settings.AppendYear,
+                    Settings.HandleVolumeVariations,
+                    Settings.UseFallbackSearch,
+                    Settings.UseTrackFallback,
+                    Settings.MinimumResults,
+                    !string.IsNullOrEmpty(Settings.SearchTemplates));
+                _sentry.LogExpectedTracks(searchId, query.Tracks?.ToList() ?? [], query.TrackCount);
 
                 dynamic request = CreateResultRequest(searchId, query);
                 return new IndexerRequest(request);

@@ -22,7 +22,13 @@ namespace Tubifarry.Core.Telemetry
 
         public void LogSearch(string searchId, string query, string? artist, string? album, string strategy, int resultCount) { }
 
+        public void LogSearchSettings(string searchId, int trackCountFilter, bool normalizedSearch, bool appendYear, bool handleVolumeVariations, bool useFallbackSearch, bool useTrackFallback, int minimumResults, bool hasTemplates) { }
+
+        public void LogExpectedTracks(string searchId, List<string> trackNames, int expectedCount) { }
+
         public void LogParseResult(string searchId, string folderPath, string regexMatchType, int fuzzyArtistScore, int fuzzyAlbumScore, int fuzzyArtistTokenSort, int fuzzyAlbumTokenSort, int priority, string codec, int bitrate, int bitDepth, int trackCountExpected, int trackCountActual, string username, bool hasFreeSlot, int queueLength, List<string>? directoryFiles, bool isInteractive) { }
+
+        public void UpdateSearchResultCount(string searchId, int actualResultCount) { }
 
         public void LogGrab(string searchId, string downloadId, bool isInteractive) { }
 

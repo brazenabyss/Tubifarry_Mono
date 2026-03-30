@@ -64,16 +64,25 @@ public class SlskdDownloadItem
         {
             if (_previousFileStates.TryGetValue(file.Filename, out SlskdFileState? fileState) && fileState != null)
             {
+                string previousState = fileState.State;
                 fileState.UpdateFile(file);
-                if (fileState.State != fileState.PreviousState)
+                if (fileState.State != previousState)
                 {
-                    _logger.Trace($"State change: {Path.GetFileName(file.Filename)} | {fileState.PreviousState} -> {fileState.State}");
+                    _logger.Trace($"State change: {Path.GetFileName(file.Filename)} | {previousState} -> {fileState.State}");
                     FileStateChanged?.Invoke(this, fileState);
                 }
             }
             else
             {
-                _previousFileStates.Add(file.Filename, new SlskdFileState(file));
+                SlskdFileState newFileState = new(file);
+                _previousFileStates.Add(file.Filename, newFileState);
+
+                DownloadItemStatus initialStatus = SlskdFileState.GetStatus(file.State);
+                if (initialStatus == DownloadItemStatus.Failed)
+                {
+                    _logger.Trace($"Initial state is failed: {Path.GetFileName(file.Filename)} | {file.State}");
+                    FileStateChanged?.Invoke(this, newFileState);
+                }
             }
         }
     }

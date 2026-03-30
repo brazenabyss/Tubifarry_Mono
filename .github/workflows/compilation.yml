@@ -59,6 +59,9 @@ on:
       YOUTUBE_SECRET:
         required: false
         description: "YouTube API Secret"
+      SENTRY_DSN:
+        required: false
+        description: "Sentry DSN for error reporting"
     outputs:
       build_status:
         description: "Status of the build"
@@ -135,6 +138,7 @@ jobs:
           echo "Spotify Client ID is configured: ${{ secrets.SPOTIFY_CLIENT_ID != '' }}"
           echo "Spotify Client Secret is configured: ${{ secrets.SPOTIFY_CLIENT_SECRET != '' }}"
           echo "YouTube Secret is configured: ${{ secrets.YOUTUBE_SECRET != '' }}"
+          echo "Sentry DSN is configured: ${{ secrets.SENTRY_DSN != '' }}"
 
       - name: Build with package version and metadata
         id: build_step
@@ -142,6 +146,7 @@ jobs:
           SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
           SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
           YOUTUBE_SECRET: ${{ secrets.YOUTUBE_SECRET }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           # Restore NuGet packages first
           dotnet restore *.sln
@@ -161,6 +166,7 @@ jobs:
             -p:SpotifyClientId=$SPOTIFY_CLIENT_ID \
             -p:SpotifyClientSecret=$SPOTIFY_CLIENT_SECRET \
             -p:YouTubrSecret=$YOUTUBE_SECRET \
+            -p:SentryDsn=$SENTRY_DSN \
             -p:CI="true" \
             -v:n
 

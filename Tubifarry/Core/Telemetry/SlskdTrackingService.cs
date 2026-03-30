@@ -76,6 +76,13 @@ namespace Tubifarry.Core.Telemetry
             if (string.IsNullOrEmpty(downloadId))
                 return;
 
+            SlskdBufferedContext? context = _sentry.GetContext(downloadId);
+
+            if (context == null)
+                return;
+
+            bool hadReplacement = false;
+
             // Check for replacement (old files exist)
             if (message.OldFiles?.Any() == true)
             {
@@ -83,19 +90,25 @@ namespace Tubifarry.Core.Telemetry
 
                 if (_sentry.WasRecentlyImported(albumKey, out int daysSinceImport))
                 {
-                    SlskdBufferedContext? originalContext = _sentry.GetContext(downloadId);
+                    hadReplacement = true;
                     string replacementSource = DetermineReplacementSource(message);
 
                     SlskdSentryEvents.EmitUserReplaced(
                         _sentry,
                         daysSinceImport,
-                        originalContext,
+                        context,
                         replacementSource,
                         message.TrackInfo?.Artist?.Name,
                         message.TrackInfo?.Album?.Title);
 
                     _logger.Debug($"Tracked user replacement after {daysSinceImport} days");
                 }
+            }
+
+            if (!hadReplacement)
+            {
+                SlskdSentryEvents.EmitImportSuccess(_sentry, context);
+                _logger.Debug($"Tracked import success for download {downloadId}");
             }
 
             string key = GetAlbumKey(message);
@@ -135,25 +148,27 @@ namespace Tubifarry.Core.Telemetry
             bool hasMissingTracks = trackedDownload.StatusMessages
                 .Any(sm => sm.Messages.Any(m => m.Contains("Has missing tracks", StringComparison.OrdinalIgnoreCase)));
 
-            bool hasInsufficientInfo = trackedDownload.StatusMessages
+            bool hasUnmatchedTracks = trackedDownload.StatusMessages
+                .Any(sm => sm.Messages.Any(m => m.Contains("Has unmatched tracks", StringComparison.OrdinalIgnoreCase)));
+
+            bool hasAlbumMatchNotClose = trackedDownload.StatusMessages
                 .Any(sm => sm.Messages.Any(m => m.Contains("Album match is not close enough", StringComparison.OrdinalIgnoreCase)));
 
-            return (hasMissingTracks, hasInsufficientInfo) switch
+            if (hasAlbumMatchNotClose)
+                return SlskdSentryEvents.ImportFailureReason.AlbumMatchNotClose;
+
+            return (hasMissingTracks, hasUnmatchedTracks) switch
             {
-                (true, true) => SlskdSentryEvents.ImportFailureReason.Both,
+                (true, true) => SlskdSentryEvents.ImportFailureReason.MixedTrackIssues,
                 (true, false) => SlskdSentryEvents.ImportFailureReason.MissingTracks,
-                (false, true) => SlskdSentryEvents.ImportFailureReason.AlbumMatchNotClose,
+                (false, true) => SlskdSentryEvents.ImportFailureReason.UnmatchedTracks,
                 _ => SlskdSentryEvents.ImportFailureReason.Unknown
             };
         }
 
-        private static List<string> ExtractStatusMessages(TrackedDownload trackedDownload)
-        {
-            return trackedDownload.StatusMessages
+        private static List<string> ExtractStatusMessages(TrackedDownload trackedDownload) => [.. trackedDownload.StatusMessages
                 .SelectMany(sm => sm.Messages)
-                .Where(m => !string.IsNullOrEmpty(m))
-                .ToList();
-        }
+                .Where(m => !string.IsNullOrEmpty(m))];
 
         private static string? ExtractSearchIdFromInfoUrl(string infoUrl)
         {

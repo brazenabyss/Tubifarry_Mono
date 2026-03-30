@@ -1,10 +1,6 @@
 #if !MASTER_BRANCH
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using NLog;
 using NLog.Targets;
-using Sentry;
 
 namespace Tubifarry.Core.Telemetry
 {
@@ -25,7 +21,7 @@ namespace Tubifarry.Core.Telemetry
         {
             { LogLevel.Debug, BreadcrumbLevel.Debug },
             { LogLevel.Error, BreadcrumbLevel.Error },
-            { LogLevel.Fatal, BreadcrumbLevel.Critical },
+            { LogLevel.Fatal, BreadcrumbLevel.Fatal },
             { LogLevel.Info, BreadcrumbLevel.Info },
             { LogLevel.Trace, BreadcrumbLevel.Debug },
             { LogLevel.Warn, BreadcrumbLevel.Warning }
@@ -48,9 +44,9 @@ namespace Tubifarry.Core.Telemetry
             {
                 if (logEvent.Level >= MinimumBreadcrumbLevel)
                 {
-                    var breadcrumbLevel = BreadcrumbLevelMap.GetValueOrDefault(logEvent.Level, BreadcrumbLevel.Info);
-                    
-                    var data = logEvent.Properties?
+                    BreadcrumbLevel breadcrumbLevel = BreadcrumbLevelMap.GetValueOrDefault(logEvent.Level, BreadcrumbLevel.Info);
+
+                    Dictionary<string, string>? data = logEvent.Properties?
                         .Where(p => p.Key?.ToString() != "Sentry")
                         .ToDictionary(p => p.Key?.ToString() ?? "", p => p.Value?.ToString() ?? "");
 
@@ -73,7 +69,7 @@ namespace Tubifarry.Core.Telemetry
 
         private void CaptureEvent(LogEventInfo logEvent)
         {
-            var sentryEvent = new SentryEvent(logEvent.Exception)
+            SentryEvent sentryEvent = new SentryEvent(logEvent.Exception)
             {
                 Level = LevelMap.GetValueOrDefault(logEvent.Level, SentryLevel.Info),
                 Logger = logEvent.LoggerName,
@@ -81,7 +77,7 @@ namespace Tubifarry.Core.Telemetry
             };
 
             sentryEvent.SetExtra("logger_name", logEvent.LoggerName);
-            
+
             if (logEvent.CallerFilePath != null)
                 sentryEvent.SetExtra("caller_file", logEvent.CallerFilePath);
             if (logEvent.CallerLineNumber > 0)
@@ -91,9 +87,9 @@ namespace Tubifarry.Core.Telemetry
 
             if (logEvent.Properties != null)
             {
-                foreach (var prop in logEvent.Properties)
+                foreach (KeyValuePair<object, object> prop in logEvent.Properties)
                 {
-                    var key = prop.Key?.ToString();
+                    string? key = prop.Key?.ToString();
                     if (key == "Sentry" && prop.Value is string[] fingerprint && fingerprint.Length > 0)
                     {
                         sentryEvent.SetFingerprint(fingerprint);

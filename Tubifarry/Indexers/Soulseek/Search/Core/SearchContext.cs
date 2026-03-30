@@ -86,6 +86,7 @@ public sealed record SearchQuery
     public bool Interactive { get; init; }
     public bool ExpandDirectory { get; init; }
     public int TrackCount { get; init; }
+    public IReadOnlyList<string> Tracks { get; init; } = [];
     public string? SearchText { get; init; }
 
     public static SearchQuery FromContext(SearchContext context) => new()
@@ -95,6 +96,7 @@ public sealed record SearchQuery
         Interactive = context.Interactive,
         ExpandDirectory = false,
         TrackCount = context.TrackCount,
+        Tracks = context.Tracks,
         SearchText = null
     };
 }

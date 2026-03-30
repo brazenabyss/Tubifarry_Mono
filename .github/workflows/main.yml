@@ -58,10 +58,11 @@ jobs:
       branch_repo_url: ${{ needs.git-info.outputs.branch_repo_url }}       
       repo_owner: ${{ needs.git-info.outputs.repo_owner }}       
       minimum_lidarr_version: ${{ needs.metadata.outputs.minimum_lidarr_version }}     
-    secrets:       
-      SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}       
-      SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}     
-      YOUTUBE_SECRET: ${{ secrets.YOUTUBE_SECRET }}     
+    secrets:
+      SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+      SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
+      YOUTUBE_SECRET: ${{ secrets.YOUTUBE_SECRET }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}     
     needs: [metadata, git-info, dotnet-setup]      
 
   # Package the artifacts   

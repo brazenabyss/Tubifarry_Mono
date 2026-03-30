@@ -12,6 +12,7 @@ using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Queue;
 using System.Text.Json;
 using Tubifarry.Core.Model;
+using Tubifarry.Core.Telemetry;
 using Tubifarry.Core.Utilities;
 
 namespace Tubifarry.Indexers.Soulseek
@@ -26,6 +27,7 @@ namespace Tubifarry.Indexers.Soulseek
         private readonly IHistoryService _historyService;
         private readonly IDownloadHistoryService _downloadHistoryService;
         private readonly IQueueService _queueService;
+        private readonly ISentryHelper _sentry;
 
         private static readonly Dictionary<int, string> _interactiveResults = [];
         private static readonly Dictionary<string, (HashSet<string> IgnoredUsers, long LastFileSize)> _ignoreListCache = new();
@@ -45,6 +47,7 @@ namespace Tubifarry.Indexers.Soulseek
             _historyService = historyService;
             _downloadHistoryService = downloadHistoryService;
             _queueService = queueService;
+            _sentry = sentry;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
@@ -120,6 +123,8 @@ namespace Tubifarry.Indexers.Soulseek
                         albumDatas.Add(albumData);
                     }
                 }
+
+                _sentry.UpdateSearchResultCount(searchResponse.Id, albumDatas.Count);
 
                 RemoveSearch(searchResponse.Id, albumDatas.Count != 0 && searchTextData.Interactive);
             }

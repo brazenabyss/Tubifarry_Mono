@@ -1,4 +1,5 @@
 #if !MASTER_BRANCH
+using NzbDrone.Common.Instrumentation;
 using System.Collections.Concurrent;
 
 namespace Tubifarry.Core.Telemetry
@@ -28,6 +29,30 @@ namespace Tubifarry.Core.Telemetry
             context.Breadcrumbs.Add($"Search: '{query}' via {strategy} → {resultCount} results");
 
             _contextBySearchId[searchId] = context;
+        }
+
+        public void LogSearchSettings(string searchId, int trackCountFilter, bool normalizedSearch, bool appendYear, bool handleVolumeVariations, bool useFallbackSearch, bool useTrackFallback, int minimumResults, bool hasTemplates)
+        {
+            if (_contextBySearchId.TryGetValue(searchId, out SlskdBufferedContext? context))
+            {
+                context.SettingsTrackCountFilter = trackCountFilter;
+                context.SettingsNormalizedSearch = normalizedSearch;
+                context.SettingsAppendYear = appendYear;
+                context.SettingsHandleVolumeVariations = handleVolumeVariations;
+                context.SettingsUseFallbackSearch = useFallbackSearch;
+                context.SettingsUseTrackFallback = useTrackFallback;
+                context.SettingsMinimumResults = minimumResults;
+                context.SettingsHasTemplates = hasTemplates;
+            }
+        }
+
+        public void LogExpectedTracks(string searchId, List<string> trackNames, int expectedCount)
+        {
+            if (_contextBySearchId.TryGetValue(searchId, out SlskdBufferedContext? context))
+            {
+                context.ExpectedTracks = trackNames;
+                context.ExpectedTrackCount = expectedCount;
+            }
         }
 
         public void LogParseResult(
@@ -74,16 +99,62 @@ namespace Tubifarry.Core.Telemetry
             context.DirectoryFiles = directoryFiles;
             context.IsInteractive = isInteractive;
 
-            context.Breadcrumbs.Add($"Parse: dir='{folderPath}' regex={regexMatchType} fuzzy_artist={fuzzyArtistScore} fuzzy_album={fuzzyAlbumScore} priority={priority}");
+            context.AllCandidates.Add(new ParseCandidate
+            {
+                FolderName = Path.GetFileName(folderPath.TrimEnd('\\', '/')),
+                FullPath = folderPath,
+                RegexMatchType = regexMatchType,
+                FuzzyArtist = fuzzyArtistScore,
+                FuzzyAlbum = fuzzyAlbumScore,
+                Priority = priority,
+                TrackCount = trackCountActual,
+                Codec = codec,
+                Username = username,
+                WasGrabbed = false
+            });
+        }
+
+        public void UpdateSearchResultCount(string searchId, int actualResultCount)
+        {
+            if (_contextBySearchId.TryGetValue(searchId, out SlskdBufferedContext? context))
+            {
+                context.TotalResults = actualResultCount;
+                int idx = context.Breadcrumbs.FindIndex(b => b.StartsWith("Search:"));
+                if (idx >= 0)
+                    context.Breadcrumbs[idx] = $"Search: '{context.SearchQuery}' via {context.Strategy} → {actualResultCount} results";
+            }
         }
 
         public void LogGrab(string searchId, string downloadId, bool isInteractive)
         {
+            NzbDroneLogger.GetLogger(this).Debug($"[SearchContextBuffer] LogGrab: searchId={searchId} knownSearchIds=[{string.Join(",", _contextBySearchId.Keys)}]");
             if (_contextBySearchId.TryRemove(searchId, out SlskdBufferedContext? context))
             {
                 context.DownloadId = downloadId;
                 context.IsInteractive = isInteractive;
-                context.Breadcrumbs.Add($"Grab: {(isInteractive ? "interactive" : "auto-selected")}, downloadId={downloadId}");
+
+                // Mark the grabbed candidate
+                ParseCandidate? grabbed = context.AllCandidates.FirstOrDefault(c => c.FullPath == context.FolderPath);
+                if (grabbed != null)
+                    grabbed.WasGrabbed = true;
+
+                // Calculate selection analysis
+                if (context.AllCandidates.Count > 0)
+                {
+                    context.OurTopPriority = context.AllCandidates.Max(c => c.Priority);
+                    context.GrabbedPriority = grabbed?.Priority;
+                    context.LidarrUsedOurTop = context.OurTopPriority == context.GrabbedPriority;
+
+                    // Add summary breadcrumb
+                    ParseCandidate best = context.AllCandidates.OrderByDescending(c => c.Priority).First();
+                    int rank = context.AllCandidates.OrderByDescending(c => c.Priority).ToList().IndexOf(grabbed) + 1;
+                    context.Breadcrumbs.Add($"Parsed {context.AllCandidates.Count} candidates (best: priority={best.Priority}, regex={best.RegexMatchType})");
+                    context.Breadcrumbs.Add($"Grabbed: '{grabbed?.FolderName}' (priority={grabbed?.Priority}, rank=#{rank}, {(isInteractive ? "interactive" : "auto")})");
+                }
+                else
+                {
+                    context.Breadcrumbs.Add($"Grab: {(isInteractive ? "interactive" : "auto-selected")}");
+                }
 
                 _contextByDownloadId[downloadId] = context;
             }
