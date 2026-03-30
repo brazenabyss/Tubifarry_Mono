@@ -55,49 +55,66 @@ namespace Tubifarry.Download.Clients.Monochrome
             string albumId = Options.ItemId;
 
             MonochromeAlbumDetail? albumDetail = await FetchAlbumDetail(baseUrl, albumId, token);
-            if (albumDetail?.Tracks?.Items == null || albumDetail.Tracks.Items.Count == 0)
+            List<MonochromeTrack> tracks = albumDetail?.Items?
+                .Where(i => i.Type == "track" && i.Item != null)
+                .Select(i => i.Item!)
+                .ToList() ?? new List<MonochromeTrack>();
+
+            if (tracks.Count == 0)
                 throw new Exception($"No tracks found for album {albumId}");
 
             _logger.Debug("Downloading {Count} tracks for album {Title}",
-                albumDetail.Tracks.Items.Count, albumDetail.Title);
+                tracks.Count, albumDetail!.Title);
 
-            _expectedTrackCount = albumDetail.Tracks.Items.Count;
+            _expectedTrackCount = tracks.Count;
 
-            foreach (MonochromeTrack track in albumDetail.Tracks.Items)
+            foreach (MonochromeTrack track in tracks)
             {
                 token.ThrowIfCancellationRequested();
                 await DownloadTrack(track, albumDetail, baseUrl, token);
             }
         }
 
-        private async Task<MonochromeAlbumDetail?> FetchAlbumDetail(string baseUrl, string albumId, CancellationToken ct)
+                private async Task<MonochromeAlbumDetail?> FetchAlbumDetail(string baseUrl, string albumId, CancellationToken ct)
         {
             string url = $"{baseUrl}/album/?id={albumId}";
             _logger.Trace("Fetching album detail: {Url}", url);
             HttpResponseMessage response = await _httpClient.GetAsync(url, ct);
             response.EnsureSuccessStatusCode();
             string json = await response.Content.ReadAsStringAsync(ct);
-            return JsonSerializer.Deserialize<MonochromeAlbumDetail>(json,
+            MonochromeAlbumResponse? envelope = JsonSerializer.Deserialize<MonochromeAlbumResponse>(json,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return envelope?.Data;
         }
 
         private async Task DownloadTrack(MonochromeTrack track, MonochromeAlbumDetail album,
             string baseUrl, CancellationToken ct)
         {
-            string manifestUrl = $"{baseUrl}/track/?id={track.Id}&quality={Options.Quality}";
+            // Use LOSSLESS quality — HI_RES_LOSSLESS returns MPD XML which requires DASH parsing
+            string quality = Options.Quality == "HI_RES_LOSSLESS" ? "LOSSLESS" : Options.Quality;
+            string manifestUrl = $"{baseUrl}/track/?id={track.Id}&quality={quality}";
             _logger.Trace("Fetching track manifest: {Url}", manifestUrl);
 
             HttpResponseMessage manifestResponse = await _httpClient.GetAsync(manifestUrl, ct);
             manifestResponse.EnsureSuccessStatusCode();
 
-            string manifestJson = await manifestResponse.Content.ReadAsStringAsync(ct);
-            MonochromeTrack? trackWithManifest = JsonSerializer.Deserialize<MonochromeTrack>(manifestJson,
+            string responseJson = await manifestResponse.Content.ReadAsStringAsync(ct);
+
+            // Unwrap data envelope
+            MonochromeTrackResponse? trackResponse = JsonSerializer.Deserialize<MonochromeTrackResponse>(responseJson,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            if (string.IsNullOrEmpty(trackWithManifest?.Manifest))
+            string? manifestBase64 = trackResponse?.Data?.Manifest;
+            string? mimeType = trackResponse?.Data?.ManifestMimeType;
+
+            if (string.IsNullOrEmpty(manifestBase64))
                 throw new Exception($"No manifest returned for track {track.Id}");
 
-            string decodedManifest = Encoding.UTF8.GetString(Convert.FromBase64String(trackWithManifest.Manifest));
+            // Only handle BTS JSON manifests (LOSSLESS/AAC) — not MPD XML (HI_RES)
+            if (mimeType != "application/vnd.tidal.bts")
+                throw new Exception($"Unsupported manifest type '{mimeType}' for track {track.Id}. Use LOSSLESS quality.");
+
+            string decodedManifest = Encoding.UTF8.GetString(Convert.FromBase64String(manifestBase64));
             MonochromeManifest? manifest = JsonSerializer.Deserialize<MonochromeManifest>(decodedManifest,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 

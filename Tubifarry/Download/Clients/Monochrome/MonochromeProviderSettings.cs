@@ -21,7 +21,7 @@ namespace Tubifarry.Download.Clients.Monochrome
 
         public MonochromeProviderSettings()
         {
-            BaseUrl = "https://hifi.402d65.dev";
+            BaseUrl = "https://frankfurt-1.monochrome.tf";
             Quality = (int)MonochromeQuality.HI_RES_LOSSLESS;
             DownloadPath = "/downloads/monochrome";
             MaxDownloadSpeed = 0;

@@ -24,7 +24,7 @@ namespace Tubifarry.Indexers.Monochrome
 
         public MonochromeIndexerSettings()
         {
-            BaseUrl = "https://hifi.402d65.dev";
+            BaseUrl = "https://frankfurt-1.monochrome.tf";
             Quality = (int)MonochromeQuality.HI_RES_LOSSLESS;
             SearchLimit = 20;
             RequestTimeout = 60;

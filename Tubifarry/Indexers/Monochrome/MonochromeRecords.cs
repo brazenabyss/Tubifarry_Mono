@@ -149,6 +149,15 @@ namespace Tubifarry.Indexers.Monochrome
         public List<string>? Urls { get; set; }
     }
 
+    public class MonochromeAlbumResponse
+    {
+        [JsonPropertyName("version")]
+        public string? Version { get; set; }
+
+        [JsonPropertyName("data")]
+        public MonochromeAlbumDetail? Data { get; set; }
+    }
+
     public class MonochromeAlbumDetail
     {
         [JsonPropertyName("id")]
@@ -175,12 +184,51 @@ namespace Tubifarry.Indexers.Monochrome
         [JsonPropertyName("cover")]
         public string? Cover { get; set; }
 
-        [JsonPropertyName("tracks")]
-        public MonochromeTrackList? Tracks { get; set; }
+        [JsonPropertyName("items")]
+        public List<MonochromeTrackItem>? Items { get; set; }
 
         public string ArtistName => Artists?.FirstOrDefault()?.Name ?? "Unknown Artist";
     }
+
+    public class MonochromeTrackItem
+    {
+        [JsonPropertyName("item")]
+        public MonochromeTrack? Item { get; set; }
+
+        [JsonPropertyName("type")]
+        public string? Type { get; set; }
+    }
 }
+
+    public class MonochromeTrackResponse
+    {
+        [JsonPropertyName("version")]
+        public string? Version { get; set; }
+
+        [JsonPropertyName("data")]
+        public MonochromeTrackManifestData? Data { get; set; }
+    }
+
+    public class MonochromeTrackManifestData
+    {
+        [JsonPropertyName("trackId")]
+        public long TrackId { get; set; }
+
+        [JsonPropertyName("audioQuality")]
+        public string? AudioQuality { get; set; }
+
+        [JsonPropertyName("manifestMimeType")]
+        public string? ManifestMimeType { get; set; }
+
+        [JsonPropertyName("manifest")]
+        public string? Manifest { get; set; }
+
+        [JsonPropertyName("bitDepth")]
+        public int BitDepth { get; set; }
+
+        [JsonPropertyName("sampleRate")]
+        public int SampleRate { get; set; }
+    }
 
 namespace Tubifarry.Download.Clients.Monochrome
 {
