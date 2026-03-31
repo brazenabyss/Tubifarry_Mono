@@ -2,6 +2,7 @@ using NzbDrone.Core.Parser.Model;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using TagLib;
 using Tubifarry.Core.Utilities;
 using Tubifarry.Download.Base;
 using Tubifarry.Indexers.Monochrome;
@@ -140,8 +141,60 @@ namespace Tubifarry.Download.Clients.Monochrome
             using FileStream fileStream = new(filePath, FileMode.Create, FileAccess.Write,
                 FileShare.None, 81920, true);
             await contentStream.CopyToAsync(fileStream, ct);
+            fileStream.Close();
+
+            await EmbedTags(filePath, track, album, ct);
 
             _logger.Debug("Finished track {Number} '{Title}'", track.TrackNumber, track.Title);
         }
+        private async Task EmbedTags(string filePath, MonochromeTrack track, MonochromeAlbumDetail album, CancellationToken ct)
+        {
+            try
+            {
+                using TagLib.File tagFile = TagLib.File.Create(filePath);
+
+                tagFile.Tag.Title = track.Title ?? string.Empty;
+                tagFile.Tag.Track = (uint)track.TrackNumber;
+                tagFile.Tag.Disc = (uint)track.VolumeNumber;
+                tagFile.Tag.Performers = [track.ArtistName];
+                tagFile.Tag.AlbumArtists = [album.ArtistName];
+                tagFile.Tag.Album = album.Title ?? string.Empty;
+                tagFile.Tag.Year = ParseYear(album.ReleaseDate);
+
+                // Embed cover art
+                if (!string.IsNullOrEmpty(album.Cover))
+                {
+                    string coverUrl = $"https://resources.tidal.com/images/{album.Cover.Replace('-', '/')}/1280x1280.jpg";
+                    try
+                    {
+                        byte[] coverBytes = await _httpClient.GetByteArrayAsync(coverUrl, ct);
+                        tagFile.Tag.Pictures = [new TagLib.Picture(new TagLib.ByteVector(coverBytes))
+                        {
+                            Type = TagLib.PictureType.FrontCover,
+                            MimeType = "image/jpeg"
+                        }];
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn("Failed to embed cover art for track {Id}: {Msg}", track.Id, ex.Message);
+                    }
+                }
+
+                tagFile.Save();
+                _logger.Trace("Tagged track {Number} '{Title}'", track.TrackNumber, track.Title);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Failed to tag file {Path}", filePath);
+            }
+        }
+
+        private static uint ParseYear(string? releaseDate)
+        {
+            if (string.IsNullOrEmpty(releaseDate)) return 0;
+            if (DateTime.TryParse(releaseDate, out DateTime d)) return (uint)d.Year;
+            return 0;
+        }
+
     }
 }
