@@ -27,24 +27,6 @@ namespace Tubifarry.Download.Clients.Monochrome
         public MonochromeDownloadRequest(RemoteAlbum remoteAlbum, MonochromeDownloadOptions options)
             : base(remoteAlbum, options) { }
 
-        protected override long GetRemainingSize()
-        {
-            if (_expectedTrackCount <= 0)
-                return Math.Max(0, (_totalBytes > 0 ? _totalBytes : ReleaseInfo.Size) - _downloadedBytes);
-
-            // Average bytes per completed track, fall back to ReleaseInfo.Size estimate
-            long perTrack = _completedTracks > 0
-                ? _completedTrackBytes / _completedTracks
-                : (ReleaseInfo.Size > 0 ? ReleaseInfo.Size / _expectedTrackCount : 0);
-
-            // Bytes downloaded into the current in-progress track
-            long currentTrackProgress = _downloadedBytes - _completedTrackBytes;
-
-            // Remaining = (tracks not yet started * perTrack) + remainder of current track
-            long remainingTracks = _expectedTrackCount - _completedTracks;
-            return Math.Max(0, remainingTracks * perTrack - currentTrackProgress);
-        }
-
         public override void Start()
         {
             if (_state == MonochromeDownloadState.Running) return;
@@ -63,6 +45,43 @@ namespace Tubifarry.Download.Clients.Monochrome
                     _logger.Error(ex, "Monochrome download failed for {Id}", Options.ItemId);
                 }
             });
+        }
+
+        public override DownloadClientItem ClientItem
+        {
+            get
+            {
+                DownloadClientItem item = _clientItem;
+                item.Status = GetDownloadItemStatus();
+                item.Message = GetDistinctMessages();
+                item.CanBeRemoved = _state == MonochromeDownloadState.Completed;
+                item.CanMoveFiles = _state == MonochromeDownloadState.Completed;
+
+                if (_expectedTrackCount <= 0)
+                {
+                    item.TotalSize = ReleaseInfo.Size;
+                    item.RemainingSize = Math.Max(0, ReleaseInfo.Size - _downloadedBytes);
+                    return item;
+                }
+
+                // Stable per-track byte estimate — use completed track average, fall back to ReleaseInfo
+                long perTrack = _completedTracks > 0
+                    ? _completedTrackBytes / _completedTracks
+                    : (ReleaseInfo.Size > 0 ? ReleaseInfo.Size / _expectedTrackCount : 1024 * 1024 * 10);
+
+                long totalSize = _expectedTrackCount * perTrack;
+
+                // Current track in-progress bytes, capped at perTrack to avoid overshooting
+                long inProgress = Math.Min(_downloadedBytes - _completedTrackBytes, perTrack);
+
+                long remaining = Math.Max(0,
+                    (_expectedTrackCount - _completedTracks) * perTrack - inProgress);
+
+                item.TotalSize = totalSize;
+                item.RemainingSize = remaining;
+                item.RemainingTime = GetRemainingTime();
+                return item;
+            }
         }
 
         public override DownloadItemStatus GetDownloadItemStatus() => _state switch
