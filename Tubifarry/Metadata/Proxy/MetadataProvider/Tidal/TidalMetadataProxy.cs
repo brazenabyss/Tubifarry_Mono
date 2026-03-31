@@ -65,6 +65,7 @@ namespace Tubifarry.Metadata.Proxy.MetadataProvider.Tidal
                 throw new Exception($"Artist {tidalId} not found on Tidal");
 
             List<TidalAlbumSummary> albums = full?.Albums?.Items ?? [];
+            albums = DeduplicateAlbums(albums); 
             Artist artist = TidalMappingHelper.MapArtistFromData(artistData.Artist, artistData.Cover, albums);
 
             // Attach albums
@@ -72,6 +73,34 @@ namespace Tubifarry.Metadata.Proxy.MetadataProvider.Tidal
             artist.Albums = new(mappedAlbums);
 
             return artist;
+        }
+
+        private static readonly HashSet<string> _losslessQualities = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "LOSSLESS", "HI_RES_LOSSLESS"
+        };
+
+        private List<TidalAlbumSummary> DeduplicateAlbums(List<TidalAlbumSummary> albums)
+        {
+            return albums
+                .GroupBy(a => (
+                    Title: a.Title?.Trim().ToLowerInvariant() ?? string.Empty,
+                    Year: a.ReleaseDate?.Length >= 4 ? a.ReleaseDate[..4] : string.Empty,
+                    Tracks: a.NumberOfTracks,
+                    Type: a.Type?.ToUpperInvariant() ?? string.Empty
+                ))
+                .Select(group =>
+                {
+                    List<TidalAlbumSummary> lossless = group
+                        .Where(a => _losslessQualities.Contains(a.AudioQuality ?? string.Empty))
+                        .ToList();
+
+                    // Fall back to full group if no lossless version exists
+                    List<TidalAlbumSummary> candidates = lossless.Count > 0 ? lossless : group.ToList();
+
+                    return candidates.OrderByDescending(a => a.Popularity).First();
+                })
+                .ToList();
         }
 
         public Tuple<string, Album, List<ArtistMetadata>> GetAlbumInfo(string foreignAlbumId)
