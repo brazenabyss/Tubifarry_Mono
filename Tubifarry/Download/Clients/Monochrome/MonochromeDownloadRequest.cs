@@ -8,6 +8,8 @@ using Tubifarry.Download.Base;
 using Tubifarry.Indexers.Monochrome;
 using NzbDrone.Core.Download;
 
+
+
 namespace Tubifarry.Download.Clients.Monochrome
 {
     public class MonochromeDownloadRequest : BaseDownloadRequest<MonochromeDownloadOptions>
@@ -16,6 +18,7 @@ namespace Tubifarry.Download.Clients.Monochrome
         private long _totalBytes = 0;
         private long _downloadedBytes = 0;
         private int _completedTracks = 0;
+        private long _completedTrackBytes = 0;
         private MonochromeDownloadState _state = MonochromeDownloadState.Idle;
         private Task? _downloadTask;
 
@@ -26,8 +29,20 @@ namespace Tubifarry.Download.Clients.Monochrome
 
         protected override long GetRemainingSize()
         {
-            if (_totalBytes <= 0) return Math.Max(0, ReleaseInfo.Size - _downloadedBytes);
-            return Math.Max(0, _totalBytes - _downloadedBytes);
+            if (_expectedTrackCount <= 0)
+                return Math.Max(0, (_totalBytes > 0 ? _totalBytes : ReleaseInfo.Size) - _downloadedBytes);
+
+            // Average bytes per completed track, fall back to ReleaseInfo.Size estimate
+            long perTrack = _completedTracks > 0
+                ? _completedTrackBytes / _completedTracks
+                : (ReleaseInfo.Size > 0 ? ReleaseInfo.Size / _expectedTrackCount : 0);
+
+            // Bytes downloaded into the current in-progress track
+            long currentTrackProgress = _downloadedBytes - _completedTrackBytes;
+
+            // Remaining = (tracks not yet started * perTrack) + remainder of current track
+            long remainingTracks = _expectedTrackCount - _completedTracks;
+            return Math.Max(0, remainingTracks * perTrack - currentTrackProgress);
         }
 
         public override void Start()
@@ -164,6 +179,10 @@ namespace Tubifarry.Download.Clients.Monochrome
                 Interlocked.Add(ref _downloadedBytes, bytesRead);
             }
             fileStream.Close();
+
+            long trackBytes = _downloadedBytes - _completedTrackBytes;
+            Interlocked.Add(ref _completedTrackBytes, trackBytes);
+
             _completedTracks++;
 
             await EmbedTags(filePath, track, album, ct);
