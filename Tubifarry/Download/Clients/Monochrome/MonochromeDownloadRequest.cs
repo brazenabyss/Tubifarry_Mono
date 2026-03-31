@@ -13,6 +13,9 @@ namespace Tubifarry.Download.Clients.Monochrome
     public class MonochromeDownloadRequest : BaseDownloadRequest<MonochromeDownloadOptions>
     {
         private static readonly HttpClient _httpClient = new();
+        private long _totalBytes = 0;
+        private long _downloadedBytes = 0;
+        private int _completedTracks = 0;
         private MonochromeDownloadState _state = MonochromeDownloadState.Idle;
         private Task? _downloadTask;
 
@@ -20,6 +23,12 @@ namespace Tubifarry.Download.Clients.Monochrome
 
         public MonochromeDownloadRequest(RemoteAlbum remoteAlbum, MonochromeDownloadOptions options)
             : base(remoteAlbum, options) { }
+
+        protected override long GetRemainingSize()
+        {
+            if (_totalBytes <= 0) return Math.Max(0, ReleaseInfo.Size - _downloadedBytes);
+            return Math.Max(0, _totalBytes - _downloadedBytes);
+        }
 
         public override void Start()
         {
@@ -137,11 +146,25 @@ namespace Tubifarry.Download.Clients.Monochrome
             using HttpResponseMessage streamResponse = await _httpClient.GetAsync(
                 streamUrl, HttpCompletionOption.ResponseHeadersRead, ct);
             streamResponse.EnsureSuccessStatusCode();
+
+            // Track total size for progress reporting
+            if (streamResponse.Content.Headers.ContentLength.HasValue)
+                _totalBytes += streamResponse.Content.Headers.ContentLength.Value;
+
             using Stream contentStream = await streamResponse.Content.ReadAsStreamAsync(ct);
             using FileStream fileStream = new(filePath, FileMode.Create, FileAccess.Write,
                 FileShare.None, 81920, true);
-            await contentStream.CopyToAsync(fileStream, ct);
+
+            // Copy with progress tracking
+            byte[] buffer = new byte[81920];
+            int bytesRead;
+            while ((bytesRead = await contentStream.ReadAsync(buffer, ct)) > 0)
+            {
+                await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct);
+                Interlocked.Add(ref _downloadedBytes, bytesRead);
+            }
             fileStream.Close();
+            _completedTracks++;
 
             await EmbedTags(filePath, track, album, ct);
 
