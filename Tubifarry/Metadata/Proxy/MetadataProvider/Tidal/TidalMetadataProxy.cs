@@ -51,7 +51,12 @@ namespace Tubifarry.Metadata.Proxy.MetadataProvider.Tidal
         {
             string? tidalId = TidalMappingHelper.ExtractTidalId(foreignArtistId);
             if (tidalId == null)
-                throw new Exception($"Invalid Tidal artist ID: {foreignArtistId}");
+            {
+                _logger.Debug("Non-Tidal artist ID {0}, attempting MusicBrainz name resolution", foreignArtistId);
+                tidalId = ResolveMusicBrainzToTidal(foreignArtistId);
+                if (tidalId == null)
+                    throw new NzbDrone.Core.Exceptions.ArtistNotFoundException(foreignArtistId);
+            }
 
             TidalArtistResponse? artistData = _api.GetArtistAsync(BaseUrl, tidalId).GetAwaiter().GetResult();
             TidalArtistFullResponse? full = _api.GetArtistFullAsync(BaseUrl, tidalId).GetAwaiter().GetResult();
@@ -73,7 +78,10 @@ namespace Tubifarry.Metadata.Proxy.MetadataProvider.Tidal
         {
             string? tidalId = TidalMappingHelper.ExtractTidalId(foreignAlbumId);
             if (tidalId == null)
-                throw new Exception($"Invalid Tidal album ID: {foreignAlbumId}");
+            {
+                _logger.Debug("Tidal proxy skipping non-Tidal album ID: {0}", foreignAlbumId);
+                throw new NzbDrone.Core.Exceptions.AlbumNotFoundException(foreignAlbumId);
+            }
 
             MonochromeAlbumResponse? response = _api.GetAlbumAsync(BaseUrl, tidalId).GetAwaiter().GetResult();
             MonochromeAlbumDetail? detail = response?.Data;
@@ -166,5 +174,94 @@ namespace Tubifarry.Metadata.Proxy.MetadataProvider.Tidal
         }
 
         private static bool IsTidalId(string? s) => s != null && s.EndsWith("@tidal");
+        // --- MusicBrainz → Tidal resolution ---
+
+        private static readonly string _cacheFile = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "Lidarr", "mb-tidal-cache.json");
+
+        private static Dictionary<string, string>? _idCache;
+
+        private static Dictionary<string, string> LoadCache()
+        {
+            if (_idCache != null) return _idCache;
+            try
+            {
+                if (File.Exists(_cacheFile))
+                    _idCache = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(
+                        File.ReadAllText(_cacheFile)) ?? [];
+            }
+            catch { }
+            _idCache ??= [];
+            return _idCache;
+        }
+
+        private static void SaveCache()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_cacheFile)!);
+                File.WriteAllText(_cacheFile,
+                    System.Text.Json.JsonSerializer.Serialize(_idCache));
+            }
+            catch { }
+        }
+
+        private string? ResolveMusicBrainzToTidal(string mbId)
+        {
+            Dictionary<string, string> cache = LoadCache();
+            if (cache.TryGetValue(mbId, out string? cached))
+            {
+                _logger.Debug("Cache hit for MusicBrainz ID {0} → Tidal {1}", mbId, cached);
+                return cached;
+            }
+
+            // Resolve name from MusicBrainz
+            string? artistName = null;
+            try
+            {
+                using System.Net.Http.HttpClient http = new();
+                http.DefaultRequestHeaders.Add("User-Agent", Tubifarry.UserAgent);
+                string mbUrl = $"https://musicbrainz.org/ws/2/artist/{mbId}?fmt=json";
+                string json = http.GetStringAsync(mbUrl).GetAwaiter().GetResult();
+                System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse(json);
+                artistName = doc.RootElement.GetProperty("name").GetString();
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Failed to resolve MusicBrainz ID {0} to artist name", mbId);
+                return null;
+            }
+
+            if (string.IsNullOrEmpty(artistName))
+                return null;
+
+            _logger.Debug("Resolved MusicBrainz {0} → '{1}', searching Tidal", mbId, artistName);
+
+            // Search Tidal for the artist
+            List<TidalArtistSearchItem> results = _api.SearchArtistsAsync(BaseUrl, artistName)
+                .GetAwaiter().GetResult();
+
+            // Best match: exact name match first, then highest popularity
+            TidalArtistSearchItem? best = results
+                .OrderByDescending(a => string.Equals(a.Name, artistName, StringComparison.OrdinalIgnoreCase) ? 1000 : 0)
+                .ThenByDescending(a => a.Popularity)
+                .FirstOrDefault();
+
+            if (best == null)
+            {
+                _logger.Warn("No Tidal match found for artist '{0}' (MB: {1})", artistName, mbId);
+                return null;
+            }
+
+            string tidalId = best.Id.ToString();
+            _logger.Info("Mapped MusicBrainz {0} ('{1}') → Tidal {2} ('{3}')",
+                mbId, artistName, tidalId, best.Name);
+
+            cache[mbId] = tidalId;
+            SaveCache();
+            return tidalId;
+        }
+
     }
 }
