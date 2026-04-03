@@ -22,22 +22,24 @@ namespace Tubifarry.Indexers.Monochrome
 
         public IndexerPageableRequestChain GetSearchRequests(AlbumSearchCriteria searchCriteria)
         {
-            // Search by album title, with artist as fallback tier
             LazyIndexerPageableRequestChain chain = new();
             string baseUrl = _settings!.BaseUrl.TrimEnd('/');
 
-            // Primary: search by album name
             string albumQuery = searchCriteria.AlbumQuery?.Trim() ?? string.Empty;
             string artistQuery = searchCriteria.ArtistQuery?.Trim() ?? string.Empty;
 
             if (!string.IsNullOrEmpty(albumQuery))
             {
-                string url = $"{baseUrl}/search/?al={Uri.EscapeDataString(albumQuery)}";
+                // Primary: combine album + artist when available, fall back to album-only
+                string url = !string.IsNullOrEmpty(artistQuery)
+                    ? $"{baseUrl}/search/?al={Uri.EscapeDataString(albumQuery)}&a={Uri.EscapeDataString(artistQuery)}"
+                    : $"{baseUrl}/search/?al={Uri.EscapeDataString(albumQuery)}";
+
                 _logger.Trace("Monochrome album search: {Url}", url);
                 chain.Add([CreateRequest(url)]);
             }
 
-            // Fallback tier: search by artist if album search yields nothing
+            // Fallback tier: artist-only if the combined/album search yields nothing
             if (!string.IsNullOrEmpty(artistQuery))
             {
                 string fallback = $"{baseUrl}/search/?a={Uri.EscapeDataString(artistQuery)}";
