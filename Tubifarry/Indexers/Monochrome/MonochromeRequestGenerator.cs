@@ -30,19 +30,22 @@ namespace Tubifarry.Indexers.Monochrome
 
             if (!string.IsNullOrEmpty(albumQuery))
             {
-                // Primary: combine album + artist when available, fall back to album-only
-                string url = !string.IsNullOrEmpty(artistQuery)
-                    ? $"{baseUrl}/search/?al={Uri.EscapeDataString(albumQuery)}&a={Uri.EscapeDataString(artistQuery)}"
-                    : $"{baseUrl}/search/?al={Uri.EscapeDataString(albumQuery)}";
+                string url = $"{baseUrl}/search/?al={Uri.EscapeDataString(albumQuery)}&limit=100";
+                IndexerRequest request = CreateRequest(url);
+
+                // Pass artist query via header so the parser can filter the 100 results down
+                if (!string.IsNullOrEmpty(artistQuery))
+                    request.HttpRequest.Headers["X-Artist-Filter"] = artistQuery;
 
                 _logger.Trace("Monochrome album search: {Url}", url);
-                chain.Add([CreateRequest(url)]);
+                chain.Add([request]);
             }
 
-            // Fallback tier: artist-only if the combined/album search yields nothing
+            // Fallback tier: artist-only if album search yields nothing after filtering
             if (!string.IsNullOrEmpty(artistQuery))
             {
                 string fallback = $"{baseUrl}/search/?a={Uri.EscapeDataString(artistQuery)}";
+                _logger.Trace("Monochrome artist-only fallback: {Url}", fallback);
                 chain.AddTier([CreateRequest(fallback)]);
             }
 

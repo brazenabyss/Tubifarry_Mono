@@ -31,6 +31,16 @@ namespace Tubifarry.Indexers.Monochrome
                     return releases;
                 }
 
+                // If the request carried an artist filter, narrow the results before processing
+                string? artistFilter = indexerResponse.Request.HttpRequest.Headers["X-Artist-Filter"];
+                if (!string.IsNullOrEmpty(artistFilter))
+                {
+                    int before = albums.Count;
+                    albums = albums.Where(a => IsArtistMatch(a.ArtistName, artistFilter)).ToList();
+                    _logger.Trace("Monochrome artist filter '{Filter}': {Before} → {After} results",
+                        artistFilter, before, albums.Count);
+                }
+
                 string quality = indexerResponse.Request.HttpRequest.Headers["X-Quality"]
                     ?? MonochromeQuality.HI_RES_LOSSLESS.ToString();
 
@@ -47,6 +57,16 @@ namespace Tubifarry.Indexers.Monochrome
             }
             return releases;
         }
+
+        /// <summary>
+        /// Bidirectional case-insensitive contains match — handles both "Aer" matching "Aer"
+        /// and edge cases where the stored name is a substring of the query or vice versa.
+        /// Returns true if no artist name is present (don't filter out untagged results).
+        /// </summary>
+        private static bool IsArtistMatch(string? artistName, string filter) =>
+            string.IsNullOrEmpty(artistName) ||
+            artistName.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+            filter.Contains(artistName, StringComparison.OrdinalIgnoreCase);
 
         private AlbumData MapAlbumToData(MonochromeAlbum album, string quality, string baseUrl)
         {
