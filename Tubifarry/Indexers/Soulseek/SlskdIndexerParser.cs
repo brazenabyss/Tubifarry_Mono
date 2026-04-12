@@ -3,10 +3,13 @@ using NLog;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Instrumentation;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.History;
+using NzbDrone.Core.History;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Queue;
 using System.Text.Json;
 using Tubifarry.Core.Model;
 using Tubifarry.Core.Utilities;
@@ -20,19 +23,28 @@ namespace Tubifarry.Indexers.Soulseek
         private readonly Lazy<IIndexerFactory> _indexerFactory;
         private readonly IHttpClient _httpClient;
         private readonly ISlskdItemsParser _itemsParser;
+        private readonly IHistoryService _historyService;
+        private readonly IDownloadHistoryService _downloadHistoryService;
+        private readonly IQueueService _queueService;
 
         private static readonly Dictionary<int, string> _interactiveResults = [];
         private static readonly Dictionary<string, (HashSet<string> IgnoredUsers, long LastFileSize)> _ignoreListCache = new();
+        private readonly object _rateLimitLock = new();
+        private DateTime _rateLimitCacheTimestamp = DateTime.MinValue;
+        private HashSet<string> _rateLimitedUsersCache = new(StringComparer.OrdinalIgnoreCase);
 
         private SlskdSettings Settings => _indexer.Settings;
 
-        public SlskdIndexerParser(SlskdIndexer indexer, Lazy<IIndexerFactory> indexerFactory, IHttpClient httpClient, ISlskdItemsParser itemsParser)
+        public SlskdIndexerParser(SlskdIndexer indexer, Lazy<IIndexerFactory> indexerFactory, IHttpClient httpClient, ISlskdItemsParser itemsParser, IHistoryService historyService, IDownloadHistoryService downloadHistoryService, IQueueService queueService, ISentryHelper sentry)
         {
             _indexer = indexer;
             _indexerFactory = indexerFactory;
             _logger = NzbDroneLogger.GetLogger(this);
             _httpClient = httpClient;
             _itemsParser = itemsParser;
+            _historyService = historyService;
+            _downloadHistoryService = downloadHistoryService;
+            _queueService = queueService;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
@@ -50,10 +62,11 @@ namespace Tubifarry.Indexers.Soulseek
 
                 SlskdSearchData searchTextData = SlskdSearchData.FromJson(indexerResponse.HttpRequest.ContentSummary);
                 HashSet<string>? ignoredUsers = GetIgnoredUsers(Settings.IgnoreListPath);
+                HashSet<string> rateLimitedUsers = GetRateLimitedUsers();
 
                 foreach (SlskdFolderData response in searchResponse.Responses)
                 {
-                    if (ignoredUsers?.Contains(response.Username) == true)
+                    if (ignoredUsers?.Contains(response.Username) == true || rateLimitedUsers.Contains(response.Username))
                         continue;
 
                     IEnumerable<SlskdFileData> filteredFiles = SlskdFileData.GetFilteredFiles(response.Files, Settings.OnlyAudioFiles, Settings.IncludeFileExtensions);
@@ -195,6 +208,112 @@ namespace Tubifarry.Indexers.Soulseek
         }
 
         public static void InvalidIgnoreCache(string path) => _ignoreListCache.Remove(path);
+
+        private HashSet<string> GetRateLimitedUsers()
+        {
+            if (Settings.MaxGrabsPerUser <= 0 && Settings.MaxQueuedPerUser <= 0)
+                return [];
+
+            lock (_rateLimitLock)
+            {
+                if (DateTime.UtcNow - _rateLimitCacheTimestamp < TimeSpan.FromSeconds(15))
+                    return _rateLimitedUsersCache;
+
+                HashSet<string> blocked = new(StringComparer.OrdinalIgnoreCase);
+
+                if (Settings.MaxGrabsPerUser > 0)
+                    foreach ((string? user, int count) in GetGrabCounts())
+                        if (count >= Settings.MaxGrabsPerUser)
+                            blocked.Add(user);
+
+                if (Settings.MaxQueuedPerUser > 0)
+                    foreach ((string? user, int count) in GetQueuedCounts())
+                        if (count >= Settings.MaxQueuedPerUser)
+                            blocked.Add(user);
+
+                _rateLimitedUsersCache = blocked;
+                _rateLimitCacheTimestamp = DateTime.UtcNow;
+                return blocked;
+            }
+        }
+
+        private Dictionary<string, int> GetGrabCounts()
+        {
+            DateTime since = (GrabLimitIntervalType)Settings.GrabLimitInterval switch
+            {
+                GrabLimitIntervalType.Hour => DateTime.UtcNow.AddHours(-1),
+                GrabLimitIntervalType.Week => DateTime.UtcNow.AddDays(-7),
+                _ => DateTime.UtcNow.Date
+            };
+
+            int? indexerId = _indexer.Definition?.Id;
+            Dictionary<string, int> counts = new(StringComparer.OrdinalIgnoreCase);
+
+            IEnumerable<string> downloadIds = _historyService.Since(since, EntityHistoryEventType.Grabbed)
+                .Select(h => h.DownloadId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string downloadId in downloadIds)
+            {
+                DownloadHistory? grab = _downloadHistoryService.GetLatestGrab(downloadId);
+                if (grab == null)
+                    continue;
+
+                if (!string.Equals(grab.Protocol, nameof(SoulseekDownloadProtocol), StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (indexerId.HasValue && grab.IndexerId != indexerId.Value)
+                    continue;
+
+                string? username = ExtractUsernameFromUrl(grab.Release?.DownloadUrl);
+                if (username != null)
+                    counts[username] = counts.GetValueOrDefault(username) + 1;
+            }
+
+            return counts;
+        }
+
+        private Dictionary<string, int> GetQueuedCounts()
+        {
+            string? indexerName = _indexer.Definition?.Name;
+            Dictionary<string, int> counts = new(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+
+            foreach (Queue item in _queueService.GetQueue())
+            {
+                if (!string.Equals(item.Protocol, nameof(SoulseekDownloadProtocol), StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(indexerName) && !string.Equals(item.Indexer, indexerName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (string.IsNullOrWhiteSpace(item.DownloadId) || !seen.Add(item.DownloadId))
+                    continue;
+
+                DownloadHistory? grab = _downloadHistoryService.GetLatestGrab(item.DownloadId);
+                if (grab == null)
+                    continue;
+
+                string? username = ExtractUsernameFromUrl(grab.Release?.DownloadUrl);
+                if (username != null)
+                    counts[username] = counts.GetValueOrDefault(username) + 1;
+            }
+
+            return counts;
+        }
+
+        private static string? ExtractUsernameFromUrl(string? url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                return null;
+
+            int lastSlash = url.LastIndexOf('/');
+            if (lastSlash < 0 || lastSlash >= url.Length - 1)
+                return null;
+
+            return Uri.UnescapeDataString(url[(lastSlash + 1)..]);
+        }
 
         private async Task ExecuteRemovalAsync(SlskdSettings settings, string searchId)
         {

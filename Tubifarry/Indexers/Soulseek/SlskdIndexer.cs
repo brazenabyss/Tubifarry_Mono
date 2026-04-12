@@ -4,9 +4,12 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Download.History;
+using NzbDrone.Core.History;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Queue;
 using System.Net;
 using Tubifarry.Core.Replacements;
 using Tubifarry.Core.Telemetry;
@@ -29,10 +32,10 @@ namespace Tubifarry.Indexers.Soulseek
 
         internal new SlskdSettings Settings => base.Settings;
 
-        public SlskdIndexer(IHttpClient httpClient, Lazy<IIndexerFactory> indexerFactory, IIndexerStatusService indexerStatusService, ISlskdSearchChain slskdSearchChain, ISlskdItemsParser slskdItemsParser, IConfigService configService, IParsingService parsingService, ISentryHelper sentry, Logger logger)
+        public SlskdIndexer(IHttpClient httpClient, Lazy<IIndexerFactory> indexerFactory, IIndexerStatusService indexerStatusService, ISlskdSearchChain slskdSearchChain, ISlskdItemsParser slskdItemsParser, IHistoryService historyService, IDownloadHistoryService downloadHistoryService, IQueueService queueService, IConfigService configService, IParsingService parsingService, ISentryHelper sentry, Logger logger)
           : base(httpClient, indexerStatusService, configService, parsingService, sentry, logger)
         {
-            _parseIndexerResponse = new SlskdIndexerParser(this, indexerFactory, httpClient, slskdItemsParser);
+            _parseIndexerResponse = new SlskdIndexerParser(this, indexerFactory, httpClient, slskdItemsParser, historyService, downloadHistoryService, queueService, sentry);
             _indexerRequestGenerator = new SlskdRequestGenerator(this, slskdSearchChain, httpClient, sentry);
         }
 

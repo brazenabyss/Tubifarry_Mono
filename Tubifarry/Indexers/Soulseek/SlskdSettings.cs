@@ -83,6 +83,14 @@ namespace Tubifarry.Indexers.Soulseek
                 .IsValidPath()
                 .When(c => !string.IsNullOrWhiteSpace(c.IgnoreListPath))
                 .WithMessage("File path must be valid.");
+
+            RuleFor(c => c.MaxGrabsPerUser)
+                .GreaterThanOrEqualTo(0)
+                .WithMessage("Max grabs per user must be 0 or greater.");
+
+            RuleFor(c => c.MaxQueuedPerUser)
+                .GreaterThanOrEqualTo(0)
+                .WithMessage("Max queued per user must be 0 or greater.");
         }
     }
 
@@ -159,7 +167,29 @@ namespace Tubifarry.Indexers.Soulseek
         [FieldDefinition(21, Type = FieldType.Textbox, Label = "Search Templates", HelpText = "Custom search pattern (empty=disabled). Use {{Property}} syntax. Valid: AlbumTitle, AlbumYear, Disambiguation, AlbumQuery, CleanAlbumQuery, Artist.*", Advanced = true)]
         public string? SearchTemplates { get; set; } = string.Empty;
 
+        [FieldDefinition(22, Type = FieldType.Number, Label = "Grabs per User", HelpText = "Max albums grabbed from one user within the interval. 0 = disabled.", Advanced = true)]
+        public int MaxGrabsPerUser { get; set; }
+
+        [FieldDefinition(23, Type = FieldType.Select, SelectOptions = typeof(GrabLimitIntervalType), Label = "Grab Limit Interval", HelpText = "Time window for the grab limit.", Advanced = true)]
+        public int GrabLimitInterval { get; set; } = (int)GrabLimitIntervalType.Day;
+
+        [FieldDefinition(24, Type = FieldType.Number, Label = "Max Queued/User", HelpText = "Max currently queued albums per user. 0 = disabled.", Advanced = true)]
+        public int MaxQueuedPerUser { get; set; }
+
         public NzbDroneValidationResult Validate() => new(Validator.Validate(this));
+    }
+
+
+    public enum GrabLimitIntervalType
+    {
+        [FieldOption(Label = "Per Hour", Hint = "Rolling 1-hour window")]
+        Hour = 1,
+
+        [FieldOption(Label = "Per Day", Hint = "Resets at UTC midnight")]
+        Day = 24,
+
+        [FieldOption(Label = "Per Week", Hint = "Rolling 7-day window")]
+        Week = 168
     }
 
     public enum TrackCountFilterType

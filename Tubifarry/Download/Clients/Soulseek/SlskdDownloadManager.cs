@@ -351,8 +351,39 @@ public class SlskdDownloadManager : ISlskdDownloadManager
         await Task.WhenAll(files.Select(async file =>
         {
             if (SlskdFileState.GetStatus(file.State) != DownloadItemStatus.Completed)
+            {
                 await _apiClient.DeleteTransferAsync(settings, item.Username, file.Id);
+                await Task.Delay(1000);
+            }
             await _apiClient.DeleteTransferAsync(settings, item.Username, file.Id, remove: true);
+
+            try
+            {
+                string relativePath = file.Filename;
+                if (relativePath.StartsWith(settings.DownloadPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    relativePath = relativePath.Substring(settings.DownloadPath.Length).TrimStart('/', '\\');
+                }
+
+                string localFilePath = _remotePathMappingService
+                    .RemapRemoteToLocal(settings.Host, new OsPath(Path.Combine(settings.DownloadPath, relativePath)))
+                    .FullPath;
+
+                if (_diskProvider.FileExists(localFilePath))
+                {
+                    _diskProvider.DeleteFile(localFilePath);
+                    _logger.Debug($"Deleted local file: {localFilePath}");
+                }
+                else
+                {
+                    _logger.Trace($"Local file not found or path not accessible, skipping deletion: {Path.GetFileName(file.Filename)}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Trace(ex, $"Could not access local file for {Path.GetFileName(file.Filename)}: {ex.Message}");
+            }
+
             _logger.Trace($"Removed transfer {file.Id}");
         }));
     }
