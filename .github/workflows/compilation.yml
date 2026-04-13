@@ -165,7 +165,7 @@ jobs:
             -p:MinimumLidarrVersion="${{ inputs.minimum_lidarr_version }}" \
             -p:SpotifyClientId=$SPOTIFY_CLIENT_ID \
             -p:SpotifyClientSecret=$SPOTIFY_CLIENT_SECRET \
-            -p:YouTubrSecret=$YOUTUBE_SECRET \
+            -p:YouTubeSecret=$YOUTUBE_SECRET \
             -p:SentryDsn=$SENTRY_DSN \
             -p:CI="true" \
             -v:n

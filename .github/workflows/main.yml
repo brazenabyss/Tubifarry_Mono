@@ -17,7 +17,7 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true  
 
 jobs:   
-  # Detect branch from tag or reference   
+  # Detect branch from tag or reference
   branch-detection:     
     uses: ./.github/workflows/branch-detection.yml     
     with:       
@@ -25,15 +25,19 @@ jobs:
 
   # Extract metadata from the project   
   metadata:     
-    uses: ./.github/workflows/metadata.yml     
+    uses: ./.github/workflows/metadata.yml
+    needs: [branch-detection]
     with:       
-      override_plugin_name: 'Tubifarry'  # Set to empty to use repository name      
+      override_plugin_name: 'Tubifarry'
+      branch_name: ${{ needs.branch-detection.outputs.branch_name }}
 
   # Extract git-specific information   
   git-info:     
-    uses: ./.github/workflows/git-info.yml     
+    uses: ./.github/workflows/git-info.yml
+    needs: [branch-detection]
     with:       
-      tag_ref: ${{ github.ref }}      
+      tag_ref: ${{ github.ref }}
+      branch_name: ${{ needs.branch-detection.outputs.branch_name }}
 
   # Setup .NET environment and submodules   
   dotnet-setup:     
