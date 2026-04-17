@@ -240,3 +240,14 @@ namespace Tubifarry.Download.Clients.Monochrome
         Failed
     }
 }
+
+// Tidal direct API response for /tracks/{id}/playbackinfo
+public class TidalPlaybackInfo
+{
+    [JsonPropertyName("manifest")]
+    public string? Manifest { get; set; }
+    [JsonPropertyName("manifestMimeType")]
+    public string? ManifestMimeType { get; set; }
+    [JsonPropertyName("audioQuality")]
+    public string? AudioQuality { get; set; }
+}

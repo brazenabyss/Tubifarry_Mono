@@ -134,22 +134,29 @@ namespace Tubifarry.Download.Clients.Monochrome
         private async Task DownloadTrack(MonochromeTrack track, MonochromeAlbumDetail album,
             string baseUrl, CancellationToken ct)
         {
-            // Use LOSSLESS quality — HI_RES_LOSSLESS returns MPD XML which requires DASH parsing
+            // Use LOSSLESS — HI_RES_LOSSLESS returns MPD XML requiring DASH parsing
             string quality = Options.Quality == "HI_RES_LOSSLESS" ? "LOSSLESS" : Options.Quality;
-            string manifestUrl = $"{baseUrl}/track/?id={track.Id}&quality={quality}";
-            _logger.Trace("Fetching track manifest: {Url}", manifestUrl);
 
-            HttpResponseMessage manifestResponse = await _httpClient.GetAsync(manifestUrl, ct);
+            string tidalUrl = $"https://api.tidal.com/v1/tracks/{track.Id}/playbackinfo" +
+                $"?audioquality={quality}&playbackmode=STREAM&assetpresentation=FULL&countryCode={Options.CountryCode}";
+
+            _logger.Trace("Fetching track playback info from Tidal: {Url}", tidalUrl);
+
+            using HttpRequestMessage request = new(HttpMethod.Get, tidalUrl);
+            if (!string.IsNullOrEmpty(Options.TidalToken))
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Options.TidalToken);
+
+            HttpResponseMessage manifestResponse = await _httpClient.SendAsync(request, ct);
             manifestResponse.EnsureSuccessStatusCode();
 
             string responseJson = await manifestResponse.Content.ReadAsStringAsync(ct);
 
-            // Unwrap data envelope
-            MonochromeTrackResponse? trackResponse = JsonSerializer.Deserialize<MonochromeTrackResponse>(responseJson,
+            // Tidal returns PlaybackInfo directly (no data envelope)
+            TidalPlaybackInfo? playbackInfo = JsonSerializer.Deserialize<TidalPlaybackInfo>(responseJson,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            string? manifestBase64 = trackResponse?.Data?.Manifest;
-            string? mimeType = trackResponse?.Data?.ManifestMimeType;
+            string? manifestBase64 = playbackInfo?.Manifest;
+            string? mimeType = playbackInfo?.ManifestMimeType;
 
             if (string.IsNullOrEmpty(manifestBase64))
                 throw new Exception($"No manifest returned for track {track.Id}");

@@ -27,6 +27,8 @@ namespace Tubifarry.Download.Clients.Monochrome
             MaxDownloadSpeed = 0;
             ConnectionRetries = 3;
             MaxParallelDownloads = 2;
+            CountryCode = "US";
+            TidalToken = string.Empty;
         }
 
         [FieldDefinition(0, Label = "API Instance URL", Type = FieldType.Textbox,
@@ -43,15 +45,23 @@ namespace Tubifarry.Download.Clients.Monochrome
             HelpText = "Folder where Monochrome downloads will be saved")]
         public string DownloadPath { get; set; }
 
-        [FieldDefinition(3, Label = "Max Download Speed", Type = FieldType.Number,
+        [FieldDefinition(3, Label = "Tidal Access Token", Type = FieldType.Textbox,
+            HelpText = "Your Tidal Bearer token (hifi_token from browser localStorage). Used to fetch track streams directly from Tidal.")]
+        public string TidalToken { get; set; }
+
+        [FieldDefinition(4, Label = "Country Code", Type = FieldType.Textbox,
+            HelpText = "Tidal country code, e.g. US, GB, AU")]
+        public string CountryCode { get; set; }
+
+        [FieldDefinition(5, Label = "Max Download Speed", Type = FieldType.Number,
             Unit = "KB/s", HelpText = "Maximum download speed. 0 = unlimited", Advanced = true)]
         public int MaxDownloadSpeed { get; set; }
 
-        [FieldDefinition(4, Label = "Connection Retries", Type = FieldType.Number,
+        [FieldDefinition(6, Label = "Connection Retries", Type = FieldType.Number,
             HelpText = "Number of times to retry a failed download", Advanced = true)]
         public int ConnectionRetries { get; set; }
 
-        [FieldDefinition(5, Label = "Max Parallel Downloads", Type = FieldType.Number,
+        [FieldDefinition(7, Label = "Max Parallel Downloads", Type = FieldType.Number,
             HelpText = "Maximum number of tracks to download simultaneously", Advanced = true)]
         public int MaxParallelDownloads { get; set; }
 
