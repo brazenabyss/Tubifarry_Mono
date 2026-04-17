@@ -140,7 +140,7 @@ namespace Tubifarry.Download.Clients.Monochrome
             string tidalUrl = $"https://api.tidal.com/v1/tracks/{track.Id}/playbackinfo" +
                 $"?audioquality={quality}&playbackmode=STREAM&assetpresentation=FULL&countryCode={Options.CountryCode}";
 
-            _logger.Trace("Fetching track playback info from Tidal: {Url}", tidalUrl);
+            _logger.Debug("Fetching track playback info from Tidal: {Url} | Token present: {HasToken} | Token length: {Len}", tidalUrl, !string.IsNullOrEmpty(Options.TidalToken), Options.TidalToken?.Length ?? 0);
 
             using HttpRequestMessage request = new(HttpMethod.Get, tidalUrl);
             if (!string.IsNullOrEmpty(Options.TidalToken))
