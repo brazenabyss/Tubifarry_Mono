@@ -53,7 +53,7 @@ namespace Tubifarry.Download.Clients.Monochrome
                 ? System.Web.HttpUtility.ParseQueryString(uri.Query)["id"] ?? downloadUrl.Split('/').Last()
                 : downloadUrl.Split('/').Last();
 
-            _logger.Trace("Monochrome download: {Type}, ID: {Id}", isTrack ? "Track" : "Album", itemId);
+            _logger.Debug("Monochrome download: {Type}, ID: {Id} | Token present: {HasToken} | Token length: {Len}", isTrack ? "Track" : "Album", itemId, !string.IsNullOrEmpty(provider.Settings.TidalToken), provider.Settings.TidalToken?.Length ?? 0);
 
             MonochromeDownloadOptions options = new()
             {
