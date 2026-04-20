@@ -144,7 +144,7 @@ jobs:
           YOUTUBE_SECRET: ${{ secrets.YOUTUBE_SECRET }}
         run: |
           # Restore NuGet packages first
-          dotnet restore *.sln
+          dotnet restore *.sln --property:NuGetAuditLevel=high
           
           # Then build with all parameters
           dotnet build *.sln -c Release -f ${{ inputs.framework }} \
