@@ -134,17 +134,18 @@ namespace Tubifarry.Download.Clients.Monochrome
         private async Task DownloadTrack(MonochromeTrack track, MonochromeAlbumDetail album,
             string baseUrl, CancellationToken ct)
         {
-            // Use LOSSLESS quality — HI_RES_LOSSLESS returns MPD XML which requires DASH parsing
+            // Use LOSSLESS — HI_RES_LOSSLESS returns MPD XML requiring DASH parsing
             string quality = Options.Quality == "HI_RES_LOSSLESS" ? "LOSSLESS" : Options.Quality;
-            string manifestUrl = $"{baseUrl}/track/?id={track.Id}&quality={quality}";
-            _logger.Trace("Fetching track manifest: {Url}", manifestUrl);
+
+            string manifestUrl = $"{baseUrl}/trackManifests/?id={track.Id}&quality={quality}";
+            _logger.Debug("Fetching track manifest: {Url}", manifestUrl);
 
             HttpResponseMessage manifestResponse = await _httpClient.GetAsync(manifestUrl, ct);
             manifestResponse.EnsureSuccessStatusCode();
 
             string responseJson = await manifestResponse.Content.ReadAsStringAsync(ct);
 
-            // Unwrap data envelope
+            // Unwrap data envelope: { "version": "...", "data": { "manifest": "...", "manifestMimeType": "..." } }
             MonochromeTrackResponse? trackResponse = JsonSerializer.Deserialize<MonochromeTrackResponse>(responseJson,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
