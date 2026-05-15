@@ -125,11 +125,30 @@ namespace Tubifarry.Indexers.Monochrome
         [JsonPropertyName("album")]
         public MonochromeAlbum? Album { get; set; }
 
-        [JsonPropertyName("manifest")]
-        public string? Manifest { get; set; }
+        // Extra fields the /album/?id= endpoint returns per track. Useful for tagging.
+        [JsonPropertyName("isrc")]
+        public string? Isrc { get; set; }
 
-        [JsonPropertyName("manifestMimeType")]
-        public string? ManifestMimeType { get; set; }
+        [JsonPropertyName("version")]
+        public string? Version { get; set; }
+
+        [JsonPropertyName("copyright")]
+        public string? Copyright { get; set; }
+
+        [JsonPropertyName("bpm")]
+        public int? Bpm { get; set; }
+
+        [JsonPropertyName("key")]
+        public string? Key { get; set; }
+
+        [JsonPropertyName("replayGain")]
+        public double? ReplayGain { get; set; }
+
+        [JsonPropertyName("peak")]
+        public double? Peak { get; set; }
+
+        [JsonPropertyName("explicit")]
+        public bool Explicit { get; set; }
 
         public string ArtistName => Artists?.FirstOrDefault()?.Name ?? "Unknown Artist";
     }
@@ -184,6 +203,9 @@ namespace Tubifarry.Indexers.Monochrome
         [JsonPropertyName("cover")]
         public string? Cover { get; set; }
 
+        [JsonPropertyName("copyright")]
+        public string? Copyright { get; set; }
+
         [JsonPropertyName("items")]
         public List<MonochromeTrackItem>? Items { get; set; }
 
@@ -198,8 +220,8 @@ namespace Tubifarry.Indexers.Monochrome
         [JsonPropertyName("type")]
         public string? Type { get; set; }
     }
-}
 
+    // Response from /trackManifests/?id={trackId}&quality={quality}
     public class MonochromeTrackResponse
     {
         [JsonPropertyName("version")]
@@ -228,15 +250,5 @@ namespace Tubifarry.Indexers.Monochrome
 
         [JsonPropertyName("sampleRate")]
         public int SampleRate { get; set; }
-    }
-
-namespace Tubifarry.Download.Clients.Monochrome
-{
-    public enum MonochromeDownloadState
-    {
-        Idle,
-        Running,
-        Completed,
-        Failed
     }
 }
