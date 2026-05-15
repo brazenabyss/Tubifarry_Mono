@@ -1,14 +1,20 @@
-﻿using FluentValidation.Results;
+using FluentValidation.Results;
 using Newtonsoft.Json;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Download.History;
+using NzbDrone.Core.History;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser;
+using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Queue;
 using System.Net;
 using Tubifarry.Core.Replacements;
+using Tubifarry.Core.Telemetry;
 using Tubifarry.Core.Utilities;
+using Tubifarry.Indexers.Soulseek.Search.Core;
 
 namespace Tubifarry.Indexers.Soulseek
 {
@@ -26,11 +32,28 @@ namespace Tubifarry.Indexers.Soulseek
 
         internal new SlskdSettings Settings => base.Settings;
 
-        public SlskdIndexer(IHttpClient httpClient, Lazy<IIndexerFactory> indexerFactory, IIndexerStatusService indexerStatusService, IConfigService configService, IParsingService parsingService, Logger logger)
-          : base(httpClient, indexerStatusService, configService, parsingService, logger)
+        public SlskdIndexer(IHttpClient httpClient, Lazy<IIndexerFactory> indexerFactory, IIndexerStatusService indexerStatusService, ISlskdSearchChain slskdSearchChain, ISlskdItemsParser slskdItemsParser, IHistoryService historyService, IDownloadHistoryService downloadHistoryService, IQueueService queueService, IConfigService configService, IParsingService parsingService, ISentryHelper sentry, Logger logger)
+          : base(httpClient, indexerStatusService, configService, parsingService, sentry, logger)
         {
-            _parseIndexerResponse = new SlskdIndexerParser(this, indexerFactory, httpClient);
-            _indexerRequestGenerator = new SlskdRequestGenerator(this, httpClient);
+            _parseIndexerResponse = new SlskdIndexerParser(this, indexerFactory, httpClient, slskdItemsParser, historyService, downloadHistoryService, queueService, sentry);
+            _indexerRequestGenerator = new SlskdRequestGenerator(this, slskdSearchChain, httpClient, sentry);
+        }
+
+        protected override IList<ReleaseInfo> CleanupReleases(IEnumerable<ReleaseInfo> releases, bool isRecent = false)
+        {
+            IList<ReleaseInfo> result = base.CleanupReleases(releases, isRecent);
+
+            foreach (ReleaseInfo release in result)
+            {
+                if (release is not TorrentInfo slskd)
+                    continue;
+
+                int basePriority = release.IndexerPriority;
+                int score = Math.Clamp(slskd.Seeders ?? 0, 0, 10000);
+                release.IndexerPriority = basePriority + 12 - (int)Math.Round(score / 10000.0 * 24);
+            }
+
+            return result;
         }
 
         protected override async Task Test(List<ValidationFailure> failures) => failures.AddIfNotNull(await TestConnection());

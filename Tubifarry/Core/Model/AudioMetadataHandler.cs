@@ -1,4 +1,4 @@
-﻿using NLog;
+using NLog;
 using NzbDrone.Common.Instrumentation;
 using NzbDrone.Core.Music;
 using Tubifarry.Core.Records;
@@ -31,7 +31,7 @@ namespace Tubifarry.Core.Model
         {
             { AudioFormat.AAC,    new[] { "-codec:a aac", "-movflags +faststart", "-aac_coder twoloop" } },
             { AudioFormat.MP3,    new[] { "-codec:a libmp3lame" } },
-            { AudioFormat.Opus,   new[] { "-codec:a libopus", "-vbr on", "-application audio" } },
+            { AudioFormat.Opus,   new[] { "-codec:a libopus", "-vbr on", "-application audio", "-vn" } },
             { AudioFormat.Vorbis, new[] { "-codec:a libvorbis" } },
             { AudioFormat.FLAC,   new[] { "-codec:a flac", "-compression_level 8" } },
             { AudioFormat.ALAC,   new[] { "-codec:a alac" } },
@@ -93,6 +93,68 @@ namespace Tubifarry.Core.Model
             { AudioFormat.WMA, bitrate => [$"-b:a {bitrate}k"]}
         };
 
+        private static readonly Dictionary<AudioFormat, Func<int, string[]>> CBRQualityParameters = new()
+        {
+            {
+                AudioFormat.MP3,
+                bitrate => ["-b:a", $"{bitrate}k"]
+            },
+            {
+                AudioFormat.AAC,
+                bitrate => ["-b:a", $"{bitrate}k"]
+            },
+            {
+                AudioFormat.Opus,
+                bitrate => ["-b:a", $"{bitrate}k", "-vbr", "off"]
+            },
+            {
+                AudioFormat.MP4,
+                bitrate => ["-b:a", $"{bitrate}k"]
+            },
+            {
+                AudioFormat.AMR,
+                bitrate => ["-ab", $"{bitrate}k"]
+            },
+            {
+                AudioFormat.WMA,
+                bitrate => ["-b:a", $"{bitrate}k"]
+            }
+        };
+
+        private static readonly Dictionary<AudioFormat, Func<int, string[]>> BitDepthParameters = new()
+        {
+            {
+                AudioFormat.FLAC,
+                bitDepth => bitDepth switch
+                {
+                    16 => ["-sample_fmt", "s16"],
+                    24 => ["-sample_fmt", "s32", "-bits_per_raw_sample", "24"],
+                    32 => ["-sample_fmt", "s32"],
+                    _ => []
+                }
+            },
+            {
+                AudioFormat.WAV,
+                bitDepth => bitDepth switch
+                {
+                    16 => ["-codec:a", "pcm_s16le"],
+                    24 => ["-codec:a", "pcm_s24le"],
+                    32 => ["-codec:a", "pcm_s32le"],
+                    _ => []
+                }
+            },
+            {
+                AudioFormat.AIFF,
+                bitDepth => bitDepth switch
+                {
+                    16 => ["-codec:a", "pcm_s16be"],
+                    24 => ["-codec:a", "pcm_s24be"],
+                    32 => ["-codec:a", "pcm_s32be"],
+                    _ => []
+                }
+            }
+        };
+
         private static readonly string[] ExtractionParameters =
         [
             "-codec:a copy",
@@ -102,15 +164,64 @@ namespace Tubifarry.Core.Model
 
         private static readonly string[] VideoFormats =
         [
-            "matroska", "webm",           // Matroska/WebM containers
-            "mov", "mp4", "m4a",          // QuickTime/MP4 containers
-            "avi",                        // AVI containers
-            "asf", "wmv", "wma",          // Windows Media containers
-            "flv", "f4v",                 // Flash containers
-            "3gp", "3g2",                 // 3GPP containers
-            "mxf",                        // Material Exchange Format
-            "ts", "m2ts"                  // Transport streams
+            "matroska", "webm",
+            "mov", "mp4", "m4a",
+            "avi",
+            "asf", "wmv", "wma",
+            "flv", "f4v",
+            "3gp", "3g2",
+            "mxf",
+            "ts", "m2ts"
         ];
+
+        private static readonly HashSet<string> CoverArtCodecs = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "mjpeg", "png", "bmp", "gif", "webp", "jpeg", "jpg", "tiff", "tif"
+        };
+
+        private async Task<byte[]?> TryExtractCoverArtAsync()
+        {
+            try
+            {
+                using TagLib.File file = TagLib.File.Create(TrackPath);
+                byte[]? data = file.Tag.Pictures?.FirstOrDefault()?.Data?.Data;
+                if (data?.Length > 0)
+                    return data;
+            }
+            catch { }
+
+            try
+            {
+                IMediaInfo mediaInfo = await FFmpeg.GetMediaInfo(TrackPath);
+                IVideoStream? coverStream = mediaInfo.VideoStreams
+                    .FirstOrDefault(vs => CoverArtCodecs.Contains(vs.Codec ?? ""));
+
+                if (coverStream == null)
+                    return null;
+
+                string tempCoverPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.jpg");
+                try
+                {
+                    IConversion conversion = FFmpeg.Conversions.New()
+                        .AddParameter($"-i \"{TrackPath}\"")
+                        .AddParameter("-an -vcodec copy")
+                        .SetOutput(tempCoverPath);
+
+                    await conversion.Start();
+
+                    if (File.Exists(tempCoverPath))
+                        return await File.ReadAllBytesAsync(tempCoverPath);
+                }
+                finally
+                {
+                    if (File.Exists(tempCoverPath))
+                        File.Delete(tempCoverPath);
+                }
+            }
+            catch { }
+
+            return null;
+        }
 
         /// <summary>
         /// Converts audio to the specified format with optional bitrate control.
@@ -118,10 +229,11 @@ namespace Tubifarry.Core.Model
         /// <param name="audioFormat">Target audio format</param>
         /// <param name="targetBitrate">Optional target bitrate in kbps</param>
         /// <returns>True if conversion succeeded, false otherwise</returns>
-        public async Task<bool> TryConvertToFormatAsync(AudioFormat audioFormat, int? targetBitrate = null)
+        public async Task<bool> TryConvertToFormatAsync(AudioFormat audioFormat, int? targetBitrate = null, int? targetBitDepth = null, bool useCBR = false)
         {
             _logger?.Trace($"Converting {Path.GetFileName(TrackPath)} to {audioFormat}" +
-                          (targetBitrate.HasValue ? $" at {targetBitrate}kbps" : ""));
+                          (targetBitrate.HasValue ? $" at {targetBitrate}kbps" :
+                           targetBitDepth.HasValue ? $" at {targetBitDepth}-bit" : ""));
 
             if (!CheckFFmpegInstalled())
                 return false;
@@ -145,21 +257,52 @@ namespace Tubifarry.Core.Model
                 if (File.Exists(tempOutputPath))
                     File.Delete(tempOutputPath);
 
+                byte[]? preservedCoverArt = AlbumCover?.Length > 0 ? AlbumCover : await TryExtractCoverArtAsync();
+
                 IConversion conversion = await FFmpeg.Conversions.FromSnippet.Convert(TrackPath, tempOutputPath);
 
                 foreach (string parameter in BaseConversionParameters[audioFormat])
                     conversion.AddParameter(parameter);
 
-                if (AudioFormatHelper.IsLossyFormat(audioFormat) && QualityParameters.ContainsKey(audioFormat))
+                if (AudioFormatHelper.IsLossyFormat(audioFormat))
                 {
                     int bitrate = targetBitrate ?? AudioFormatHelper.GetDefaultBitrate(audioFormat);
                     bitrate = AudioFormatHelper.ClampBitrate(audioFormat, bitrate);
 
-                    string[] qualityParams = QualityParameters[audioFormat](bitrate);
+                    string[] qualityParams;
+                    string mode;
+
+                    if (useCBR && CBRQualityParameters.ContainsKey(audioFormat))
+                    {
+                        qualityParams = CBRQualityParameters[audioFormat](bitrate);
+                        mode = "CBR";
+                    }
+                    else if (QualityParameters.ContainsKey(audioFormat))
+                    {
+                        qualityParams = QualityParameters[audioFormat](bitrate);
+                        mode = "VBR";
+                    }
+                    else
+                    {
+                        qualityParams = [$"-b:a {bitrate}k"];
+                        mode = "fallback";
+                    }
+
                     foreach (string param in qualityParams)
                         conversion.AddParameter(param);
 
-                    _logger?.Trace($"Applied quality parameters for {audioFormat}: {string.Join(", ", qualityParams)}");
+                    _logger?.Trace($"Applied {mode} quality parameters for {audioFormat} at {bitrate}kbps: {string.Join(", ", qualityParams)}");
+                }
+
+                if (!AudioFormatHelper.IsLossyFormat(audioFormat) &&
+                    BitDepthParameters.ContainsKey(audioFormat) &&
+                    targetBitDepth.HasValue)
+                {
+                    string[] bitDepthParams = BitDepthParameters[audioFormat](targetBitDepth.Value);
+                    foreach (string param in bitDepthParams)
+                        conversion.AddParameter(param);
+
+                    _logger?.Trace($"Applied bit depth parameters for {audioFormat}: {targetBitDepth}-bit ({string.Join(", ", bitDepthParams)})");
                 }
 
                 _logger?.Trace($"Starting FFmpeg conversion");
@@ -170,6 +313,26 @@ namespace Tubifarry.Core.Model
 
                 File.Move(tempOutputPath, finalOutputPath, true);
                 TrackPath = finalOutputPath;
+
+                if (preservedCoverArt?.Length > 0)
+                {
+                    try
+                    {
+                        using TagLib.File destFile = TagLib.File.Create(TrackPath);
+                        destFile.Tag.Pictures = [new TagLib.Picture(new TagLib.ByteVector(preservedCoverArt))
+                        {
+                            Type = TagLib.PictureType.FrontCover,
+                            Description = "Album Cover"
+                        }];
+                        destFile.Save();
+                        _logger?.Trace("Re-embedded cover art into converted file");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.Warn(ex, "Failed to re-embed cover art after conversion, cover art may be missing");
+                    }
+                }
+
                 return true;
             }
             catch (Exception ex)
@@ -184,12 +347,16 @@ namespace Tubifarry.Core.Model
             try
             {
                 IMediaInfo mediaInfo = await FFmpeg.GetMediaInfo(TrackPath);
-                if (mediaInfo.VideoStreams.Any())
+
+                bool hasRealVideo = mediaInfo.VideoStreams.Any(vs =>
+                    !CoverArtCodecs.Contains(vs.Codec ?? "") &&
+                    !(vs.Duration.TotalSeconds < 1 && vs.Framerate <= 1));
+
+                if (hasRealVideo)
                     return true;
 
                 string probeResult = await Probe.New().Start($"-v error -show_entries format=format_name -of default=noprint_wrappers=1:nokey=1 \"{TrackPath}\"");
                 string formatName = probeResult?.Trim().ToLower() ?? "";
-                _logger?.Trace($"Detected container format via ffprobe: '{formatName}'");
                 return VideoFormats.Any(container => formatName.Contains(container));
             }
             catch (Exception ex)
@@ -247,6 +414,58 @@ namespace Tubifarry.Core.Model
             catch (Exception ex)
             {
                 _logger?.Error(ex, $"Failed to extract audio from video: {TrackPath}");
+                return false;
+            }
+        }
+
+
+        /// <summary>
+        /// Decrypts an encrypted audio file using FFmpeg with the provided decryption key.
+        /// </summary>
+        /// <param name="decryptionKey">The hex decryption key for the encrypted content.</param>
+        /// <param name="codec">The audio codec of the content (e.g., "flac", "opus", "eac3").</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>True if decryption was successful, false otherwise.</returns>
+        public async Task<bool> TryDecryptAsync(string decryptionKey, string? codec, CancellationToken token = default)
+        {
+            if (string.IsNullOrEmpty(decryptionKey))
+                return true;
+
+            if (!CheckFFmpegInstalled())
+                return false;
+
+            _logger?.Trace($"Decrypting file: {Path.GetFileName(TrackPath)}");
+
+            try
+            {
+                AudioFormat format = AudioFormatHelper.GetAudioFormatFromCodec(codec ?? "aac");
+                string extension = AudioFormatHelper.GetFileExtensionForFormat(format);
+                string outputPath = Path.ChangeExtension(TrackPath, extension);
+                string tempOutput = Path.ChangeExtension(TrackPath, $".dec{extension}");
+
+                if (File.Exists(tempOutput))
+                    File.Delete(tempOutput);
+
+                IConversion conversion = FFmpeg.Conversions.New()
+                    .AddParameter($"-decryption_key {decryptionKey}")
+                    .AddParameter($"-i \"{TrackPath}\"")
+                    .AddParameter("-c copy")
+                    .SetOutput(tempOutput);
+
+                await conversion.Start(token);
+
+                if (File.Exists(TrackPath))
+                    File.Delete(TrackPath);
+
+                File.Move(tempOutput, outputPath, true);
+                TrackPath = outputPath;
+
+                _logger?.Trace($"Successfully decrypted: {Path.GetFileName(TrackPath)}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(ex, $"Failed to decrypt file: {TrackPath}");
                 return false;
             }
         }
@@ -483,6 +702,24 @@ namespace Tubifarry.Core.Model
 
             if (!isInstalled)
             {
+                string? ffmpegEnv = Environment.GetEnvironmentVariable("FFMPEG");
+                if (!string.IsNullOrEmpty(ffmpegEnv))
+                {
+                    string dir = File.Exists(ffmpegEnv) ? Path.GetDirectoryName(ffmpegEnv)! : ffmpegEnv;
+                    if (Directory.Exists(dir))
+                    {
+                        string[] ffmpegPatterns = ["ffmpeg", "ffmpeg.exe", "ffmpeg.bin"];
+                        if (Directory.GetFiles(dir).Any(file => ffmpegPatterns.Contains(Path.GetFileName(file), StringComparer.OrdinalIgnoreCase) && IsExecutable(file)))
+                        {
+                            FFmpeg.SetExecutablesPath(dir);
+                            isInstalled = true;
+                        }
+                    }
+                }
+            }
+
+            if (!isInstalled)
+            {
                 foreach (string path in Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [])
                 {
                     if (Directory.Exists(path))
@@ -492,6 +729,7 @@ namespace Tubifarry.Core.Model
 
                         if (files.Any(file => ffmpegPatterns.Contains(Path.GetFileName(file), StringComparer.OrdinalIgnoreCase) && IsExecutable(file)))
                         {
+                            FFmpeg.SetExecutablesPath(path);
                             isInstalled = true;
                             break;
                         }

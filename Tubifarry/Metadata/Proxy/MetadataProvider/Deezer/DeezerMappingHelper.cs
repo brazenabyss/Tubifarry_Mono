@@ -61,7 +61,7 @@ namespace Tubifarry.Metadata.Proxy.MetadataProvider.Deezer
                 {
                     Format = "Digital Media",
                     Name = $"Disk {d}",
-                    Number = 1
+                    Number = d
                 }),
                 Album = album,
                 TrackCount = dAlbum.NumberOfTracks,
@@ -148,7 +148,7 @@ namespace Tubifarry.Metadata.Proxy.MetadataProvider.Deezer
             ArtistMetadata = album.ArtistMetadata,
             AlbumRelease = albumRelease,
             Artist = artist,
-            MediumNumber = albumRelease.Media.FirstOrDefault()?.Number ?? 1,
+            MediumNumber = dTrack.DiskNumber,
             Ratings = new Ratings()
         };
 

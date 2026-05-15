@@ -5,6 +5,7 @@ using NzbDrone.Core.ImportLists.Exceptions;
 using NzbDrone.Core.Parser.Model;
 using System.Net;
 using System.Text.Json;
+using Tubifarry.Core.Model;
 
 namespace Tubifarry.ImportLists.ListenBrainz.ListenBrainzPlaylist
 {
@@ -81,6 +82,47 @@ namespace Tubifarry.ImportLists.ListenBrainz.ListenBrainzPlaylist
                 _logger.Debug(ex, "Failed to extract album info from track");
                 return null;
             }
+        }
+
+        public List<PlaylistItem> ParseTrackLevelItems(string content)
+        {
+            try
+            {
+                PlaylistResponse? resp = JsonSerializer.Deserialize<PlaylistResponse>(content, GetJsonOptions());
+                IReadOnlyList<TrackData>? tracks = resp?.Playlist?.Tracks;
+
+                if (tracks?.Any() != true)
+                    return [];
+
+                return [.. tracks
+                    .Select(ToPlaylistItem)
+                    .Where(i => i != null)
+                    .Cast<PlaylistItem>()];
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to parse track-level items from ListenBrainz playlist");
+                return [];
+            }
+        }
+
+        private PlaylistItem? ToPlaylistItem(TrackData track)
+        {
+            if (string.IsNullOrWhiteSpace(track.Title) && string.IsNullOrWhiteSpace(track.Creator))
+                return null;
+
+            string? recordingMbid = track.Identifier?
+                .FirstOrDefault(id => id.Contains("musicbrainz.org/recording/"))
+                ?.Split('/')
+                .LastOrDefault();
+
+            return new PlaylistItem(
+                ArtistMusicBrainzId: ExtractArtistMbid(track) ?? "",
+                AlbumMusicBrainzId: null,
+                ArtistName: track.Creator ?? "",
+                AlbumTitle: track.Album,
+                TrackTitle: track.Title,
+                ForeignRecordingId: recordingMbid);
         }
 
         private string? ExtractArtistMbid(TrackData track)

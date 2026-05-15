@@ -13,13 +13,16 @@ using Tubifarry.ImportLists.Spotify;
 
 namespace NzbDrone.Core.ImportLists.Spotify
 {
-    public class SpotifyUserPlaylistImport : SpotifyImportListBase<SpotifyUserPlaylistImportSettings>
+    public class SpotifyUserPlaylistImport : SpotifyImportListBase<SpotifyUserPlaylistImportSettings>, IPlaylistTrackSource
     {
         private const int BaseThrottleMilliseconds = 500;
         private const int MaxRetries = 5;
         private const int BaseRateLimitDelayMilliseconds = 1000;
         private const int MaxRateLimitDelayMilliseconds = 30000;
         private FileCache? _fileCache;
+
+        private static readonly SemaphoreSlim _throttleSemaphore = new(1, 1);
+        private static DateTime _lastRequestTime = DateTime.MinValue;
 
         public SpotifyUserPlaylistImport(
             ISpotifyProxy spotifyProxy,
@@ -112,7 +115,7 @@ namespace NzbDrone.Core.ImportLists.Spotify
                         continue;
                     }
 
-                    CachedPlaylistData? cachedData = _fileCache.GetAsync<CachedPlaylistData>(cacheKey).Result;
+                    CachedPlaylistData? cachedData = _fileCache.GetAsync<CachedPlaylistData>(cacheKey).GetAwaiter().GetResult();
                     if (cachedData != null)
                     {
                         result.AddRange(cachedData.ImportListItems);
@@ -146,7 +149,7 @@ namespace NzbDrone.Core.ImportLists.Spotify
                 Playlist = playlist
             };
 
-            _fileCache!.SetAsync(cacheKey, cachedDataToSave, TimeSpan.FromDays(Settings.CacheRetentionDays)).Wait();
+            _fileCache!.SetAsync(cacheKey, cachedDataToSave, TimeSpan.FromDays(Settings.CacheRetentionDays)).GetAwaiter().GetResult();
             result.AddRange(playlistItems);
         }
 
@@ -163,6 +166,90 @@ namespace NzbDrone.Core.ImportLists.Spotify
                 Paging<PlaylistTrack> nextPage = GetNextPageWithRetry(api, playlistTracks);
                 if (nextPage != null)
                     ProcessPlaylistTracks(api, nextPage, result);
+            }
+        }
+
+        public List<PlaylistItem> FetchTrackLevelItems()
+        {
+            List<PlaylistItem> result = [];
+
+            if (Settings.AccessToken.IsNullOrWhiteSpace())
+            {
+                _logger.Warn("Access token not configured.");
+                return result;
+            }
+
+            try
+            {
+                using SpotifyWebAPI api = GetApi();
+                PrivateProfile profile = _spotifyProxy.GetPrivateProfile(this, api);
+                if (profile == null)
+                {
+                    _logger.Warn("Failed to fetch user profile.");
+                    return result;
+                }
+
+                Paging<SimplePlaylist> playlistPage = GetUserPlaylistsWithRetry(api, profile.Id);
+                if (playlistPage != null)
+                    CollectTrackItems(api, playlistPage, result);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Error fetching track-level items from Spotify");
+            }
+
+            return result;
+        }
+
+        private void CollectTrackItems(SpotifyWebAPI api, Paging<SimplePlaylist> page, List<PlaylistItem> result)
+        {
+            if (page.Items == null) return;
+
+            foreach (SimplePlaylist playlist in page.Items)
+            {
+                Paging<PlaylistTrack> tracks = GetPlaylistTracksWithRetry(api, playlist.Id);
+                if (tracks != null)
+                    AppendTrackItems(api, tracks, result);
+            }
+
+            if (page.HasNextPage())
+            {
+                Paging<SimplePlaylist> next = GetNextPageWithRetry(api, page);
+                if (next != null)
+                    CollectTrackItems(api, next, result);
+            }
+        }
+
+        private void AppendTrackItems(SpotifyWebAPI api, Paging<PlaylistTrack> tracks, List<PlaylistItem> result)
+        {
+            if (tracks.Items == null) return;
+
+            foreach (PlaylistTrack pt in tracks.Items)
+            {
+                if (pt?.Track?.Album == null) continue;
+
+                SimpleAlbum album = pt.Track.Album;
+                string artistName = album.Artists?.FirstOrDefault()?.Name
+                    ?? pt.Track.Artists?.FirstOrDefault()?.Name
+                    ?? "";
+                string trackTitle = pt.Track.Name ?? "";
+
+                if (string.IsNullOrWhiteSpace(artistName) || string.IsNullOrWhiteSpace(trackTitle))
+                    continue;
+
+                result.Add(new PlaylistItem(
+                    ArtistMusicBrainzId: "",
+                    AlbumMusicBrainzId: null,
+                    ArtistName: artistName,
+                    AlbumTitle: album.Name,
+                    TrackTitle: trackTitle));
+            }
+
+            if (tracks.HasNextPage())
+            {
+                Paging<PlaylistTrack> next = GetNextPageWithRetry(api, tracks);
+                if (next != null)
+                    AppendTrackItems(api, next, result);
             }
         }
 
@@ -197,7 +284,7 @@ namespace NzbDrone.Core.ImportLists.Spotify
 
                 int delay = CalculateRateLimitDelay(retryCount);
                 _logger.Warn($"Rate limit exceeded. Retrying in {delay} milliseconds.");
-                Task.Delay(delay).Wait();
+                Task.Delay(delay).GetAwaiter().GetResult();
                 return GetUserPlaylistsWithRetry(api, userId, retryCount + 1);
             }
         }
@@ -219,7 +306,7 @@ namespace NzbDrone.Core.ImportLists.Spotify
 
                 int delay = CalculateRateLimitDelay(retryCount);
                 _logger.Trace($"Rate limit exceeded. Retrying in {delay} milliseconds.");
-                Task.Delay(delay).Wait();
+                Task.Delay(delay).GetAwaiter().GetResult();
                 return GetPlaylistTracksWithRetry(api, playlistId, retryCount + 1);
             }
         }
@@ -241,12 +328,29 @@ namespace NzbDrone.Core.ImportLists.Spotify
 
                 int delay = CalculateRateLimitDelay(retryCount);
                 _logger.Trace($"Rate limit exceeded. Retrying in {delay} milliseconds.");
-                Task.Delay(delay).Wait();
+                Task.Delay(delay).GetAwaiter().GetResult();
                 return GetNextPageWithRetry(api, paging, retryCount + 1);
             }
         }
 
-        private static void Throttle() => Task.Delay(BaseThrottleMilliseconds).Wait();
+        private static void Throttle()
+        {
+            _throttleSemaphore.Wait();
+            try
+            {
+                TimeSpan timeSinceLastRequest = DateTime.Now - _lastRequestTime;
+                if (timeSinceLastRequest.TotalMilliseconds < BaseThrottleMilliseconds)
+                {
+                    int delayNeeded = BaseThrottleMilliseconds - (int)timeSinceLastRequest.TotalMilliseconds;
+                    Task.Delay(delayNeeded).GetAwaiter().GetResult();
+                }
+                _lastRequestTime = DateTime.Now;
+            }
+            finally
+            {
+                _throttleSemaphore.Release();
+            }
+        }
 
         private static int CalculateRateLimitDelay(int retryCount)
         {

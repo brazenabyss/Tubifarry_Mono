@@ -1,4 +1,4 @@
-﻿using FluentValidation.Results;
+using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
@@ -9,6 +9,8 @@ using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using System.Net;
+using Sentry;
+using Tubifarry.Core.Telemetry;
 using Tubifarry.Core.Utilities;
 
 namespace Tubifarry.Core.Replacements
@@ -23,6 +25,7 @@ namespace Tubifarry.Core.Replacements
         protected const int MaxNumResultsPerQuery = 1000;
 
         protected readonly IHttpClient _httpClient;
+        protected readonly ISentryHelper _sentry;
         protected new readonly Logger _logger = null!;
 
         public override bool SupportsRss { get; }
@@ -40,10 +43,12 @@ namespace Tubifarry.Core.Replacements
             IIndexerStatusService indexerStatusService,
             IConfigService configService,
             IParsingService parsingService,
+            ISentryHelper sentry,
             Logger logger)
             : base(indexerStatusService, configService, parsingService, logger)
         {
             _httpClient = httpClient;
+            _sentry = sentry;
             _logger = logger;
         }
 
@@ -77,6 +82,10 @@ namespace Tubifarry.Core.Replacements
             Func<IIndexerRequestGenerator<TIndexerPageableRequest>, IndexerPageableRequestChain<TIndexerPageableRequest>> pageableRequestChainSelector,
             bool isRecent = false)
         {
+            var span = _sentry.StartSpan("indexer.fetch");
+            _sentry.SetSpanTag(span, "indexer.type", GetType().Name);
+            _sentry.SetSpanTag(span, "indexer.is_recent", isRecent.ToString());
+
             List<ReleaseInfo> releases = [];
             string url = string.Empty;
             TimeSpan minimumBackoff = TimeSpan.FromHours(1);
@@ -144,10 +153,13 @@ namespace Tubifarry.Core.Replacements
                     UpdateRssSyncStatus(releases, lastReleaseInfo, fullyUpdated);
 
                 _indexerStatusService.RecordSuccess(Definition.Id);
+                _sentry.SetSpanData(span, "result.count", releases.Count);
+                _sentry.FinishSpan(span, SpanStatus.Ok);
             }
             catch (Exception ex)
             {
                 HandleException(ex, url, minimumBackoff);
+                _sentry.FinishSpan(span, ex);
             }
 
             return CleanupReleases(releases, isRecent);

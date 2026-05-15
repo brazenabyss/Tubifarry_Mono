@@ -68,7 +68,20 @@ jobs:
             # If no branch name from tag, try to find branch that contains this tag
             if [ -z "$BRANCH_NAME" ]; then
               echo "No branch found from tag suffix, trying git branch --contains..."
-              BRANCH_NAME=$(git branch -r --contains $TAG_NAME | grep -v HEAD | sed -e 's/ *origin\///g' | head -n 1)
+              CONTAINING_BRANCHES=$(git branch -r --contains $TAG_NAME | grep -v HEAD | sed -e 's/ *origin\///g')
+              echo "Branches containing this tag: $CONTAINING_BRANCHES"
+              
+              # Prioritize master/main when multiple branches contain the commit
+              if echo "$CONTAINING_BRANCHES" | grep -qE "^(master|main)$"; then
+                BRANCH_NAME=$(echo "$CONTAINING_BRANCHES" | grep -E "^(master|main)$" | head -n 1)
+                echo "Prioritizing default branch: $BRANCH_NAME"
+              elif echo "$CONTAINING_BRANCHES" | grep -q "^$DEFAULT_BRANCH$"; then
+                BRANCH_NAME="$DEFAULT_BRANCH"
+                echo "Using repository default branch: $BRANCH_NAME"
+              else
+                BRANCH_NAME=$(echo "$CONTAINING_BRANCHES" | head -n 1)
+                echo "Using first available branch: $BRANCH_NAME"
+              fi
             fi
             
             # Fallback to the default branch if no branch is found

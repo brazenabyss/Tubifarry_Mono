@@ -78,7 +78,7 @@ namespace Tubifarry.Indexers.YouTube
         {
             if (_sessionToken?.IsValid == true)
                 return;
-            _sessionToken = TrustedSessionHelper.GetTrustedSessionTokensAsync(_youTubeIndexer.Settings.TrustedSessionGeneratorUrl).Result;
+            _sessionToken = TrustedSessionHelper.GetTrustedSessionTokensAsync(_youTubeIndexer.Settings.TrustedSessionGeneratorUrl).GetAwaiter().GetResult();
         }
 
         private IEnumerable<IndexerRequest> GetRequests(string searchQuery, SearchCategory category)

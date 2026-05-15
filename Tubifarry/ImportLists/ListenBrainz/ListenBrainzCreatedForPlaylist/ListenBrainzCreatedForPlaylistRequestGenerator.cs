@@ -36,7 +36,7 @@ namespace Tubifarry.ImportLists.ListenBrainz.ListenBrainzCreatedForPlaylist
             }
 
             HttpRequest request = requestBuilder.Build();
-            request.Url = new HttpUri($"{_settings.BaseUrl}/1/user/{_settings.UserName}/playlists/createdfor?count={count}&offset={offset}");
+            request.Url = new HttpUri($"{_settings.BaseUrl}/1/user/{_settings.UserName?.Trim()}/playlists/createdfor?count={count}&offset={offset}");
 
             return new ImportListRequest(request);
         }

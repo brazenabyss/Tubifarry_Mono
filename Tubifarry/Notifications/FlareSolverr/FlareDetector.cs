@@ -80,7 +80,7 @@ public static class FlareDetector
             return false;
         }
 
-        string responseText = response.Content.ReadAsStringAsync().Result;
+        string responseText = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
         string? blockIndicator = CloudflareBlockIndicators.FirstOrDefault(indicator =>
             responseText.Contains(indicator, StringComparison.OrdinalIgnoreCase));
 

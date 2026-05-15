@@ -3,12 +3,16 @@ using NLog;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Instrumentation;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.History;
+using NzbDrone.Core.History;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Queue;
 using System.Text.Json;
 using Tubifarry.Core.Model;
+using Tubifarry.Core.Telemetry;
 using Tubifarry.Core.Utilities;
 
 namespace Tubifarry.Indexers.Soulseek
@@ -19,18 +23,31 @@ namespace Tubifarry.Indexers.Soulseek
         private readonly Logger _logger;
         private readonly Lazy<IIndexerFactory> _indexerFactory;
         private readonly IHttpClient _httpClient;
+        private readonly ISlskdItemsParser _itemsParser;
+        private readonly IHistoryService _historyService;
+        private readonly IDownloadHistoryService _downloadHistoryService;
+        private readonly IQueueService _queueService;
+        private readonly ISentryHelper _sentry;
 
         private static readonly Dictionary<int, string> _interactiveResults = [];
         private static readonly Dictionary<string, (HashSet<string> IgnoredUsers, long LastFileSize)> _ignoreListCache = new();
+        private readonly object _rateLimitLock = new();
+        private DateTime _rateLimitCacheTimestamp = DateTime.MinValue;
+        private HashSet<string> _rateLimitedUsersCache = new(StringComparer.OrdinalIgnoreCase);
 
         private SlskdSettings Settings => _indexer.Settings;
 
-        public SlskdIndexerParser(SlskdIndexer indexer, Lazy<IIndexerFactory> indexerFactory, IHttpClient httpClient)
+        public SlskdIndexerParser(SlskdIndexer indexer, Lazy<IIndexerFactory> indexerFactory, IHttpClient httpClient, ISlskdItemsParser itemsParser, IHistoryService historyService, IDownloadHistoryService downloadHistoryService, IQueueService queueService, ISentryHelper sentry)
         {
             _indexer = indexer;
             _indexerFactory = indexerFactory;
             _logger = NzbDroneLogger.GetLogger(this);
             _httpClient = httpClient;
+            _itemsParser = itemsParser;
+            _historyService = historyService;
+            _downloadHistoryService = downloadHistoryService;
+            _queueService = queueService;
+            _sentry = sentry;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
@@ -48,10 +65,11 @@ namespace Tubifarry.Indexers.Soulseek
 
                 SlskdSearchData searchTextData = SlskdSearchData.FromJson(indexerResponse.HttpRequest.ContentSummary);
                 HashSet<string>? ignoredUsers = GetIgnoredUsers(Settings.IgnoreListPath);
+                HashSet<string> rateLimitedUsers = GetRateLimitedUsers();
 
                 foreach (SlskdFolderData response in searchResponse.Responses)
                 {
-                    if (ignoredUsers?.Contains(response.Username) == true)
+                    if (ignoredUsers?.Contains(response.Username) == true || rateLimitedUsers.Contains(response.Username))
                         continue;
 
                     IEnumerable<SlskdFileData> filteredFiles = SlskdFileData.GetFilteredFiles(response.Files, Settings.OnlyAudioFiles, Settings.IncludeFileExtensions);
@@ -61,20 +79,7 @@ namespace Tubifarry.Indexers.Soulseek
                         if (string.IsNullOrEmpty(directoryGroup.Key))
                             continue;
 
-                        if (searchTextData.MinimumFiles > 0)
-                        {
-                            int fileCount = Settings.FilterLessFilesThanAlbum
-                                ? directoryGroup.Count(f => AudioFormatHelper.GetAudioCodecFromExtension(f.Extension ?? Path.GetExtension(f.Filename) ?? "") != AudioFormat.Unknown)
-                                : directoryGroup.Count();
-
-                            if (fileCount < searchTextData.MinimumFiles)
-                            {
-                                _logger.Trace($"Filtered: {directoryGroup.Key} ({fileCount}/{searchTextData.MinimumFiles} {(Settings.FilterLessFilesThanAlbum ? "audio tracks" : "files")})");
-                                continue;
-                            }
-                        }
-
-                        SlskdFolderData folderData = SlskdItemsParser.ParseFolderName(directoryGroup.Key) with
+                        SlskdFolderData folderData = _itemsParser.ParseFolderName(directoryGroup.Key) with
                         {
                             Username = response.Username,
                             HasFreeUploadSlot = response.HasFreeUploadSlot,
@@ -86,13 +91,40 @@ namespace Tubifarry.Indexers.Soulseek
                             FileCount = response.FileCount
                         };
 
-                        if (searchTextData.ExpandDirectory && ShouldExpandDirectory(albumDatas, searchResponse, searchTextData, directoryGroup, folderData))
-                            continue;
+                        IGrouping<string, SlskdFileData> finalGroup = directoryGroup;
+                        if (searchTextData.ExpandDirectory)
+                        {
+                            IGrouping<string, SlskdFileData>? expandedGroup = TryExpandDirectory(searchTextData, directoryGroup, folderData);
+                            if (expandedGroup != null)
+                                finalGroup = expandedGroup;
+                        }
 
-                        AlbumData originalAlbumData = SlskdItemsParser.CreateAlbumData(searchResponse.Id, directoryGroup, searchTextData, folderData, Settings, searchTextData.MinimumFiles);
-                        albumDatas.Add(originalAlbumData);
+                        if (searchTextData.MinimumFiles > 0 || searchTextData.MaximumFiles.HasValue)
+                        {
+                            bool filterActive = (TrackCountFilterType)Settings.TrackCountFilter != TrackCountFilterType.Disabled;
+                            int fileCount = filterActive
+                                ? finalGroup.Count(f => AudioFormatHelper.GetAudioCodecFromExtension(f.Extension ?? Path.GetExtension(f.Filename) ?? "") != AudioFormat.Unknown)
+                                : finalGroup.Count();
+
+                            if (fileCount < searchTextData.MinimumFiles)
+                            {
+                                _logger.Trace($"Filtered (too few): {directoryGroup.Key} ({fileCount}/{searchTextData.MinimumFiles} {(filterActive ? "audio tracks" : "files")})");
+                                continue;
+                            }
+
+                            if (searchTextData.MaximumFiles.HasValue && fileCount > searchTextData.MaximumFiles.Value)
+                            {
+                                _logger.Trace($"Filtered (too many): {directoryGroup.Key} ({fileCount}/{searchTextData.MaximumFiles} {(filterActive ? "audio tracks" : "files")})");
+                                continue;
+                            }
+                        }
+
+                        AlbumData albumData = _itemsParser.CreateAlbumData(searchResponse.Id, finalGroup, searchTextData, folderData, Settings, searchTextData.MinimumFiles);
+                        albumDatas.Add(albumData);
                     }
                 }
+
+                _sentry.UpdateSearchResultCount(searchResponse.Id, albumDatas.Count);
 
                 RemoveSearch(searchResponse.Id, albumDatas.Count != 0 && searchTextData.Interactive);
             }
@@ -104,39 +136,37 @@ namespace Tubifarry.Indexers.Soulseek
             return albumDatas.OrderByDescending(x => x.Priotity).Select(a => a.ToReleaseInfo()).ToList();
         }
 
-        private bool ShouldExpandDirectory(List<AlbumData> albumDatas, SlskdSearchResponse searchResponse, SlskdSearchData searchTextData, IGrouping<string, SlskdFileData> directoryGroup, SlskdFolderData folderData)
+        private IGrouping<string, SlskdFileData>? TryExpandDirectory(SlskdSearchData searchTextData, IGrouping<string, SlskdFileData> directoryGroup, SlskdFolderData folderData)
         {
             if (string.IsNullOrEmpty(searchTextData.Artist) || string.IsNullOrEmpty(searchTextData.Album))
-                return false;
+                return null;
 
             bool artistMatch = Fuzz.PartialRatio(folderData.Artist, searchTextData.Artist) > 85;
             bool albumMatch = Fuzz.PartialRatio(folderData.Album, searchTextData.Album) > 85;
 
             if (!artistMatch || !albumMatch)
-                return false;
+                return null;
 
             SlskdFileData? originalTrack = directoryGroup.FirstOrDefault(x => AudioFormatHelper.GetAudioCodecFromExtension(x.Extension?.ToLowerInvariant() ?? Path.GetExtension(x.Filename) ?? "") != AudioFormat.Unknown);
 
             if (originalTrack == null)
-                return false;
+                return null;
 
             _logger.Trace($"Expanding directory for: {folderData.Username}:{directoryGroup.Key}");
 
             SlskdRequestGenerator? requestGenerator = _indexer.GetExtendedRequestGenerator() as SlskdRequestGenerator;
-            IGrouping<string, SlskdFileData>? expandedGroup = requestGenerator?.ExpandDirectory(folderData.Username, directoryGroup.Key, originalTrack).Result;
+            IGrouping<string, SlskdFileData>? expandedGroup = requestGenerator?.ExpandDirectory(folderData.Username, directoryGroup.Key, originalTrack).GetAwaiter().GetResult();
 
             if (expandedGroup != null)
             {
                 _logger.Debug($"Successfully expanded directory to {expandedGroup.Count()} files");
-                AlbumData albumData = SlskdItemsParser.CreateAlbumData(searchResponse.Id, expandedGroup, searchTextData, folderData, Settings, searchTextData.MinimumFiles);
-                albumDatas.Add(albumData);
-                return true;
+                return expandedGroup;
             }
             else
             {
                 _logger.Warn($"Failed to expand directory for {folderData.Username}:{directoryGroup.Key}");
             }
-            return false;
+            return null;
         }
 
         public void RemoveSearch(string searchId, bool delay = false)
@@ -166,7 +196,7 @@ namespace Tubifarry.Indexers.Soulseek
         {
             if (!_interactiveResults.TryGetValue(message.Album.Release.IndexerId, out string? selectedId) || !message.Album.Release.InfoUrl.EndsWith(selectedId))
                 return;
-            ExecuteRemovalAsync((SlskdSettings)_indexerFactory.Value.Get(message.Album.Release.IndexerId).Settings, selectedId).Wait();
+            ExecuteRemovalAsync((SlskdSettings)_indexerFactory.Value.Get(message.Album.Release.IndexerId).Settings, selectedId).GetAwaiter().GetResult();
             _interactiveResults.Remove(message.Album.Release.IndexerId);
         }
 
@@ -176,13 +206,119 @@ namespace Tubifarry.Indexers.Soulseek
             {
                 if (_interactiveResults.TryGetValue(indexerId, out string? selectedId))
                 {
-                    ExecuteRemovalAsync((SlskdSettings)_indexerFactory.Value.Get(indexerId).Settings, selectedId).Wait();
+                    ExecuteRemovalAsync((SlskdSettings)_indexerFactory.Value.Get(indexerId).Settings, selectedId).GetAwaiter().GetResult();
                     _interactiveResults.Remove(indexerId);
                 }
             }
         }
 
         public static void InvalidIgnoreCache(string path) => _ignoreListCache.Remove(path);
+
+        private HashSet<string> GetRateLimitedUsers()
+        {
+            if (Settings.MaxGrabsPerUser <= 0 && Settings.MaxQueuedPerUser <= 0)
+                return [];
+
+            lock (_rateLimitLock)
+            {
+                if (DateTime.UtcNow - _rateLimitCacheTimestamp < TimeSpan.FromSeconds(15))
+                    return _rateLimitedUsersCache;
+
+                HashSet<string> blocked = new(StringComparer.OrdinalIgnoreCase);
+
+                if (Settings.MaxGrabsPerUser > 0)
+                    foreach ((string? user, int count) in GetGrabCounts())
+                        if (count >= Settings.MaxGrabsPerUser)
+                            blocked.Add(user);
+
+                if (Settings.MaxQueuedPerUser > 0)
+                    foreach ((string? user, int count) in GetQueuedCounts())
+                        if (count >= Settings.MaxQueuedPerUser)
+                            blocked.Add(user);
+
+                _rateLimitedUsersCache = blocked;
+                _rateLimitCacheTimestamp = DateTime.UtcNow;
+                return blocked;
+            }
+        }
+
+        private Dictionary<string, int> GetGrabCounts()
+        {
+            DateTime since = (GrabLimitIntervalType)Settings.GrabLimitInterval switch
+            {
+                GrabLimitIntervalType.Hour => DateTime.UtcNow.AddHours(-1),
+                GrabLimitIntervalType.Week => DateTime.UtcNow.AddDays(-7),
+                _ => DateTime.UtcNow.Date
+            };
+
+            int? indexerId = _indexer.Definition?.Id;
+            Dictionary<string, int> counts = new(StringComparer.OrdinalIgnoreCase);
+
+            IEnumerable<string> downloadIds = _historyService.Since(since, EntityHistoryEventType.Grabbed)
+                .Select(h => h.DownloadId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string downloadId in downloadIds)
+            {
+                DownloadHistory? grab = _downloadHistoryService.GetLatestGrab(downloadId);
+                if (grab == null)
+                    continue;
+
+                if (!string.Equals(grab.Protocol, nameof(SoulseekDownloadProtocol), StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (indexerId.HasValue && grab.IndexerId != indexerId.Value)
+                    continue;
+
+                string? username = ExtractUsernameFromUrl(grab.Release?.DownloadUrl);
+                if (username != null)
+                    counts[username] = counts.GetValueOrDefault(username) + 1;
+            }
+
+            return counts;
+        }
+
+        private Dictionary<string, int> GetQueuedCounts()
+        {
+            string? indexerName = _indexer.Definition?.Name;
+            Dictionary<string, int> counts = new(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+
+            foreach (Queue item in _queueService.GetQueue())
+            {
+                if (!string.Equals(item.Protocol, nameof(SoulseekDownloadProtocol), StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(indexerName) && !string.Equals(item.Indexer, indexerName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (string.IsNullOrWhiteSpace(item.DownloadId) || !seen.Add(item.DownloadId))
+                    continue;
+
+                DownloadHistory? grab = _downloadHistoryService.GetLatestGrab(item.DownloadId);
+                if (grab == null)
+                    continue;
+
+                string? username = ExtractUsernameFromUrl(grab.Release?.DownloadUrl);
+                if (username != null)
+                    counts[username] = counts.GetValueOrDefault(username) + 1;
+            }
+
+            return counts;
+        }
+
+        private static string? ExtractUsernameFromUrl(string? url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                return null;
+
+            int lastSlash = url.LastIndexOf('/');
+            if (lastSlash < 0 || lastSlash >= url.Length - 1)
+                return null;
+
+            return Uri.UnescapeDataString(url[(lastSlash + 1)..]);
+        }
 
         private async Task ExecuteRemovalAsync(SlskdSettings settings, string searchId)
         {

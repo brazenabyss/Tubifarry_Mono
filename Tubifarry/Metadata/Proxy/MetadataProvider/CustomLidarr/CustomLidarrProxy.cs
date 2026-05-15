@@ -1,4 +1,4 @@
-﻿using NLog;
+using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
@@ -11,10 +11,11 @@ using NzbDrone.Core.Music;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Profiles.Metadata;
 using System.Net;
+using System.Text.RegularExpressions;
 
 namespace Tubifarry.Metadata.Proxy.MetadataProvider.CustomLidarr
 {
-    public class CustomLidarrProxy : ICustomLidarrProxy
+    public partial class CustomLidarrProxy : ICustomLidarrProxy
     {
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
@@ -376,7 +377,16 @@ namespace Tubifarry.Metadata.Proxy.MetadataProvider.CustomLidarr
             }
         }
 
-        public bool IsMbidQuery(string? query) => query?.StartsWith("lidarr:") == true || query?.StartsWith("lidarrid:") == true || query?.StartsWith("mbid:") == true;
+        public string? ExtractMbid(string? query)
+        {
+            if (query.IsNullOrWhiteSpace())
+            {
+                return null;
+            }
+
+            Match match = MusicBrainzRegex().Match(query);
+            return match.Success ? match.Groups[1].Value : null;
+        }
 
         private Artist MapSearchResult(ArtistResource resource)
         {
@@ -621,6 +631,10 @@ namespace Tubifarry.Metadata.Proxy.MetadataProvider.CustomLidarr
             _ => SecondaryAlbumType.Studio,
         };
 
+        public static bool IsMbidQuery(string? query) => MusicBrainzRegex().IsMatch(query ?? string.Empty);
+
         private static IHttpRequestBuilderFactory GetRequestBuilder(CustomLidarrMetadataProxySettings settings) => new HttpRequestBuilder(settings.MetadataSource.TrimEnd("/") + "/{route}").KeepAlive().CreateFactory();
+        [GeneratedRegex(@"\b(?:lidarr:|lidarrid:|mbid:|cl:|clid:|customlidarrid:|musicbrainz\.org/(?:artist|release|recording|release-group)/)([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+        private static partial Regex MusicBrainzRegex();
     }
 }

@@ -8,6 +8,10 @@ on:
         type: string
         description: "Override the plugin name if different from repository name"
         default: ""
+      branch_name:
+        required: true
+        type: string
+        description: "Branch name (passed from main workflow)"
     outputs:
       plugin_name:
         description: "The name of the plugin"
@@ -29,19 +33,13 @@ on:
         value: ${{ jobs.metadata.outputs.framework }}
 
 jobs:
-  branch_detection:
-    uses: ./.github/workflows/branch-detection.yml
-    with:
-      github_ref: ${{ github.ref }}
-
   metadata:
     runs-on: ubuntu-latest
-    needs: [branch_detection]
     outputs:
       plugin_name: ${{ steps.extract_repo_name.outputs.plugin_name }}
       package_version: ${{ steps.extract_version.outputs.package_version }}
       build_suffix: ${{ steps.build_info.outputs.build_suffix }}
-      branch_name: ${{ needs.branch_detection.outputs.branch_name }}
+      branch_name: ${{ inputs.branch_name }}
       framework: ${{ steps.extract_framework.outputs.framework }}
       minimum_lidarr_version: ${{ steps.fetch_minimum_lidarr_version.outputs.minimum_lidarr_version }}
       is_prerelease: ${{ steps.extract_version.outputs.is_prerelease }}
@@ -52,17 +50,6 @@ jobs:
         with:
           submodules: true
           fetch-depth: 0
-
-      - name: Ensure all Git refs are available
-        run: |
-          git fetch --prune --unshallow || git fetch --prune
-          git fetch --tags --force
-          
-          # Debug: Show all available branches and tags
-          echo "Available remote branches:"
-          git branch -r
-          echo "Available tags:"
-          git tag -l
 
       - name: Extract repository name or use override
         id: extract_repo_name
